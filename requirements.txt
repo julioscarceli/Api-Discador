@@ -1,0 +1,7 @@
+playwright
+python-dotenv
+pandas
+httpx
+fastapi
+uvicorn
+

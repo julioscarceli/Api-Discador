@@ -1,0 +1,37 @@
+version: '3.8'
+
+volumes:
+  cache_data:
+
+services:
+  # SERVIÇO 1: API GATEWAY (FastAPI)
+  # Responsável por entregar os dados para a Lovable
+  api-gateway:
+    build: .
+    command: uvicorn api_server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - cache_data:/app/cache
+    restart: always
+    env_file: .env
+
+  # SERVIÇO 2: FINANCE WORKER (Agendador de Custos)
+  # Responsável pelo scraping do Master Metric às 15h e 18h30
+  cost-worker:
+    build: .
+    command: python cost_scheduler.py
+    volumes:
+      - cache_data:/app/cache
+    restart: always
+    env_file: .env
+
+  # SERVIÇO 3: OPERATION MONITOR (O Coração)
+  # Responsável por rodar o main.py (Monitoramento + Restarter)
+  operation-monitor:
+    build: .
+    command: python main.py
+    volumes:
+      - cache_data:/app/cache
+    restart: always
+    env_file: .env
