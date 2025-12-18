@@ -14,7 +14,7 @@ BASE_URL_SP = "https://186.194.50.149"
 # --- CONFIGURAÇÕES DO NEGÓCIO ---
 FILA_NOME_MG = "DISCADOR_MG"
 FILA_NOME_SP = "DISCADOR_SP"
-SAIDAS_VALOR = "70" # Valor de canais para o upload diário
+SAIDAS_VALOR = "130" # Valor de canais para o upload diário
 
 
 
@@ -24,3 +24,4 @@ API_TOKEN_NAME = "API_TOKEN" # Chave lida do Railway Secrets/Local .env
 
 # --- CAMINHOS DE MAILING LOCAIS (TESTE) ---
 LOCAL_MAILING_BASE_DIR = r"D:\Ferramentas\5. Verificação Final\MAILING DISCADOR"
+
