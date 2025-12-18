@@ -1,3 +1,5 @@
+# cost_scheduler.py
+
 import time
 import subprocess
 import sys
@@ -11,7 +13,6 @@ HORARIOS_ALVO = [
 ]
 
 last_run_time = None
-
 
 def should_run_now():
     global last_run_time
@@ -28,18 +29,22 @@ def should_run_now():
         return True
     return False
 
-
 def run_worker():
-    print(f"[{datetime.now()}] Iniciando scraping de custos...")
+    print(f"[{datetime.now()}] 🚀 Iniciando scraping de custos (Execução Imediata)...")
     try:
-        # Chama o seu script monitor original
+        # Chama o script de monitoramento que agora envia via POST para a API
         subprocess.run([sys.executable, "scripts/cost_monitor.py"], check=True)
     except Exception as e:
         print(f"Erro no worker: {e}")
 
-
 if __name__ == "__main__":
     print("Agendador de Custos iniciado no Railway...")
+    
+    # --- GATILHO DE VISUALIZAÇÃO IMEDIATA ---
+    # Esta linha garante que o dashboard carregue os dados assim que o card sobe
+    run_worker() 
+    # ----------------------------------------
+
     while True:
         if should_run_now():
             run_worker()
