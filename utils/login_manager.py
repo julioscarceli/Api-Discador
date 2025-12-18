@@ -77,7 +77,7 @@ async def create_context_and_login(playwright_instance, server: str) -> tuple[Br
         await page.fill('input[name="password"]', SENHA)
         
         # Tolerância de 60s para o clique
-        await page.click('button:has-text("Vamos lá")', timeout=60000) 
+        await page.click('button:has-text("ENTRAR")', timeout=60000) 
         
         # 4. Espera Pós-Login
         await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=15000)
@@ -90,5 +90,6 @@ async def create_context_and_login(playwright_instance, server: str) -> tuple[Br
         if 'browser' in locals() and browser:
             await browser.close()
         return None, None, None
+
 
 
