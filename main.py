@@ -13,11 +13,11 @@ SERVERS_TO_MONITOR = ["MG", "SP"]
 # Intervalo de Checagem (30 segundos)
 CHECK_INTERVAL_SECONDS = 15  # Usando 15s para performance
 
-# --- CONSTANTES DE HORÁRIO DE EXPEDIENTE (PARA MONITORAMENTO) ---
-START_HOUR = 9  # 09:00h
-START_MINUTE = 30  # 09:30h
-END_HOUR = 18  # 18:00h
-END_MINUTE = 30  # 18:30h
+# --- CONSTANTES DE HORÁRIO DE EXPEDIENTE (AJUSTADO PARA UTC/RAILWAY) ---
+START_HOUR = 12   # 09:30h + 3h = 12:30h UTC
+START_MINUTE = 30
+END_HOUR = 21     # 18:30h + 3h = 21:30h UTC
+END_MINUTE = 30
 # --------------------------------------------
 
 # --- CONSTANTES DE EXECUÇÃO DO PIPELINE DE IMPORTAÇÃO (11:00h) ---
@@ -121,6 +121,7 @@ if __name__ == '__main__':
         asyncio.run(main_scheduler())
     except KeyboardInterrupt:
         print("Scheduler encerrado.")
+
 
 
 
