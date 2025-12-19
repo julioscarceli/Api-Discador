@@ -42,9 +42,11 @@ async def atualizar_custos(data: Dict[str, Any]):
 # ====================================================================
 # ENDPOINT 2: CUSTOS FINANCEIROS (GET /api/custos/)
 # ====================================================================
-@app.get("/api/custos/")
+@app.get("/api/custos/") # Define que este endereço só aceita pedidos de "Leitura" (GET).
 async def get_custos_financeiros():
     """Retorna os dados guardados em memória. Se vazio, tenta ler o ficheiro local por segurança."""
+    # global: Avisa ao Python para usar a variável que está "fora" da função, 
+    # aquela que o worker alimentou via POST.
     global cache_financeiro_memoria
 
     if not cache_financeiro_memoria:
@@ -84,3 +86,4 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "SISTEMA", "status": "Sucesso", "registros": 0}]
+
