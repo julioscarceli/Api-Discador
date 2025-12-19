@@ -1,5 +1,3 @@
-# api_server.py (VERSÃO COM CACHE EM MEMÓRIA PARA RECEBER DADOS DO WORKER)
-
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,32 +23,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🚨 VARIÁVEL GLOBAL: Guarda os últimos dados financeiros na RAM
-cache_financeiro_memoria = {}
+# ====================================================================
+# 🧠 MEMÓRIA DA CALCULADORA (Persiste enquanto o card estiver Online)
+# ====================================================================
+estado_financeiro = {
+    "total_acumulado_semana": 0.0,
+    "ultimo_custo_diario_recebido": 0.0,
+    "dia_da_ultima_coleta": -1,  # 0=Segunda, 6=Domingo
+    "cache_completo": {}
+}
 
 # ====================================================================
-# ENDPOINT NOVO: RECEBER DADOS DO WORKER (POST /api/atualizar-custos)
+# ENDPOINT: RECEBER DADOS DO WORKER (POST /api/atualizar-custos)
 # ====================================================================
 @app.post("/api/atualizar-custos")
 async def atualizar_custos(data: Dict[str, Any]):
-    """Recebe dados brutos do cost-monitor.py e guarda no cache de memória."""
-    global cache_financeiro_memoria
-    cache_financeiro_memoria = data
-    print(f"--- [{datetime.now().strftime('%H:%M:%S')}] ✅ Cache atualizado via Worker ---")
-    return {"status": "sucesso", "timestamp": datetime.now().isoformat()}
+    global estado_financeiro
+    
+    custo_hoje = data.get("custo_diario_total", 0.0)
+    hoje_data = datetime.now()
+    dia_semana_hoje = hoje_data.weekday()
+
+    print(f"--- [{hoje_data.strftime('%H:%M:%S')}] Processando Atualização ---")
+
+    # 1. LÓGICA DE RESET SEMANAL (Se for segunda-feira e a última vez foi outro dia)
+    if dia_semana_hoje == 0 and estado_financeiro["dia_da_ultima_coleta"] != 0:
+        print("🗓️ Nova semana detectada! Resetando total acumulado.")
+        estado_financeiro["total_acumulado_semana"] = 0.0
+
+    # 2. LÓGICA DE ACUMULAÇÃO DIÁRIA
+    # Se o valor recebido agora é menor que o último, o discador resetou (virou o dia)
+    if custo_hoje < estado_financeiro["ultimo_custo_diario_recebido"]:
+        # Somamos o valor máximo alcançado ontem ao total da semana
+        estado_financeiro["total_acumulado_semana"] += estado_financeiro["ultimo_custo_diario_recebido"]
+        print(f"💰 Dia virou! R$ {estado_financeiro['ultimo_custo_diario_recebido']} somado ao acumulado semanal.")
+
+    # 3. ATUALIZAÇÃO DO ESTADO
+    estado_financeiro["ultimo_custo_diario_recebido"] = custo_hoje
+    estado_financeiro["dia_da_ultima_coleta"] = dia_semana_hoje
+    
+    # Injetamos o cálculo final no JSON que vai para a Lovable
+    data["custo_semanal_acumulado"] = estado_financeiro["total_acumulado_semana"] + custo_hoje
+    estado_financeiro["cache_completo"] = data
+
+    print(f"✅ Dashboard atualizado. Semanal: R$ {data['custo_semanal_acumulado']:.2f}")
+    return {"status": "sucesso"}
 
 # ====================================================================
-# ENDPOINT 2: CUSTOS FINANCEIROS (GET /api/custos/)
+# ENDPOINT: CONSULTA DA LOVABLE (GET /api/custos/)
 # ====================================================================
-@app.get("/api/custos/") # Define que este endereço só aceita pedidos de "Leitura" (GET).
+@app.get("/api/custos/")
 async def get_custos_financeiros():
-    """Retorna os dados guardados em memória. Se vazio, tenta ler o ficheiro local por segurança."""
-    # global: Avisa ao Python para usar a variável que está "fora" da função, 
-    # aquela que o worker alimentou via POST.
-    global cache_financeiro_memoria
+    global estado_financeiro
 
-    if not cache_financeiro_memoria:
-        # Se o worker ainda não enviou nada via POST, a API tenta uma falha silenciosa amigável
+    if not estado_financeiro["cache_completo"]:
         return {
             "saldo_atual": "Carregando...",
             "custo_diario": "Carregando...",
@@ -58,11 +84,11 @@ async def get_custos_financeiros():
             "data_coleta": datetime.now().isoformat()
         }
 
-    # Formata os dados para o padrão do dashboard
-    return processar_dados_para_dashboard_formatado(cache_financeiro_memoria)
+    return processar_dados_para_dashboard_formatado(estado_financeiro["cache_completo"])
+
 
 # ====================================================================
-# OUTROS ENDPOINTS (MANTIDOS)
+# ENDPOINTS OPERACIONAIS (Status e Upload)
 # ====================================================================
 @app.get("/api/status/{server_id}")
 async def get_status_metrics(server_id: str):
@@ -86,4 +112,5 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "SISTEMA", "status": "Sucesso", "registros": 0}]
+
 
