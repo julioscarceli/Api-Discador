@@ -75,12 +75,20 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         if browser: await browser.close()
 
 async def enviar_para_api(dados: Dict[str, Any]):
+    # async with: Abre uma conexão temporária com a internet (cliente) e garante 
+    # que ela seja fechada após o uso para não gastar memória.
     """Envia os dados coletados para a API Gateway via HTTP."""
     async with httpx.AsyncClient() as client:
         try:
+            # await: Diz ao script "espere a resposta da internet sem travar o resto do sistema".
+            # client.post: O comando de "empurrar" dados.
+            # API_URL_INTERNA: O endereço de destino (sua API no Railway).
+            # json=dados: Transforma o dicionário Python em um formato que a web entende (JSON).
+            # timeout=20.0: Se a API não responder em 20 segundos, desista (evita que o script fique travado para sempre).
             await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
             print("✅ Dados enviados com sucesso para a API Gateway!")
         except Exception as e:
+            # Se a internet cair ou a URL estiver errada, captura o erro e avisa o que houve.
             print(f"❌ Erro ao enviar para a API: {e}")
 
 if __name__ == '__main__':
@@ -96,3 +104,4 @@ if __name__ == '__main__':
         
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"| SALDO: {fmt['saldo_atual']} | DIA: {fmt['custo_diario']} |")
+
