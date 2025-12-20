@@ -41,38 +41,68 @@ def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any
 async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
     browser = None
     try:
+        print("\n[DEBUG] 🟢 Iniciando contexto do Playwright...")
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=headless, args=["--no-sandbox"])
+            print("[DEBUG] 🚀 Lançando navegador Chromium...")
+            # Adicionados argumentos extras para evitar travamentos no Railway
+            browser = await p.chromium.launch(
+                headless=headless, 
+                args=[
+                    "--no-sandbox", 
+                    "--disable-setuid-sandbox", 
+                    "--disable-dev-shm-usage", 
+                    "--disable-gpu"
+                ]
+            )
+            
+            print("[DEBUG] 📄 Abrindo nova página...")
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
 
+            print(f"[DEBUG] 🌐 Acessando URL: {BASE_URL}")
             await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
+            
+            print("[DEBUG] 🔑 Preenchendo credenciais de login...")
             await page.fill("#username", USUARIO)
             await page.fill("#password", SENHA)
             await page.click('button:has-text("Conectar")')
             
+            print("[DEBUG] ⏳ Aguardando carregamento do Dashboard (Saldo)...")
             saldo_el = "#system-container > div > div:nth-child(2) > div > h3"
             await page.wait_for_selector(saldo_el, timeout=45000)
             saldo_text = await page.text_content(saldo_el)
+            print(f"[DEBUG] ✅ Saldo localizado: {saldo_text}")
 
-            # Navegação Relatórios
-            await page.click('//*[@id="main-menu"]/li[5]/a') # Dropdown
+            print("[DEBUG] 🖱️ Navegando para Relatórios Agrupados...")
+            await page.click('//*[@id="main-menu"]/li[5]/a') # Dropdown Relatórios
             await page.click("#relatorioAgrupadoLinhas")
+            
+            print("[DEBUG] ⏳ Aguardando tabela de custos (#tblMain)...")
             await page.wait_for_selector("#tblMain", timeout=45000)
 
+            print("[DEBUG] 📊 Extraindo valores da tabela...")
             discador = await page.text_content('//*[@id="tblMain"]/tbody/tr[1]/td[7]')
             ura = await page.text_content('//*[@id="tblMain"]/tbody/tr[2]/td[7]')
+            
+            print(f"[DEBUG] 📥 Valores brutos: Discador={discador}, URA={ura}")
 
             dados = {
                 "saldo_atual": clean_to_float(saldo_text),
                 "custo_diario_total": (clean_to_float(discador) or 0) + (clean_to_float(ura) or 0),
-                "custo_semanal_acumulado": 0.0 # Será calculado pela lógica de persistência abaixo
+                "custo_semanal_acumulado": 0.0 # Calculado na API via lógica de RAM
             }
+            
+            print("[DEBUG] ✨ Coleta concluída com sucesso!")
             return dados
+
     except Exception as e:
+        print(f"[DEBUG] ❌ ERRO DURANTE O SCRAPING: {str(e)}")
         return {"erro": str(e)}
+        
     finally:
-        if browser: await browser.close()
+        if browser:
+            print("[DEBUG] 🔒 Fechando navegador...")
+            await browser.close()
 
 async def enviar_para_api(dados: Dict[str, Any]):
     # async with: Abre uma conexão temporária com a internet (cliente) e garante 
@@ -104,4 +134,5 @@ if __name__ == '__main__':
         
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"| SALDO: {fmt['saldo_atual']} | DIA: {fmt['custo_diario']} |")
+
 
