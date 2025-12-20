@@ -1,4 +1,6 @@
 import os
+import json
+import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
@@ -24,49 +26,66 @@ app.add_middleware(
 )
 
 # ====================================================================
-# 🧠 MEMÓRIA DA CALCULADORA (Persiste enquanto o card estiver Online)
+# 🗄️ CONFIGURAÇÃO REDIS (Persistência Total)
 # ====================================================================
-estado_financeiro = {
-    "total_acumulado_semana": 0.0,
-    "ultimo_custo_diario_recebido": 0.0,
-    "dia_da_ultima_coleta": -1,  # 0=Segunda, 6=Domingo
-    "cache_completo": {}
-}
+# Use a variável de ambiente REDIS_URL no Railway ou o link direto
+REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
+r = redis.from_url(REDIS_URL, decode_responses=True)
+
+def get_estado():
+    """Recupera o estado financeiro do Redis ou cria um novo se vazio."""
+    estado = r.get("estado_financeiro")
+    if estado:
+        return json.loads(estado)
+    return {
+        "total_acumulado_semana": 0.0,
+        "ultimo_custo_diario_recebido": 0.0,
+        "dia_da_ultima_coleta": -1,  # 0=Segunda, 5=Sábado, 6=Domingo
+        "ultima_data_reset": ""
+    }
+
+def salvar_estado(estado):
+    """Salva o estado atualizado no Redis."""
+    r.set("estado_financeiro", json.dumps(estado))
 
 # ====================================================================
 # ENDPOINT: RECEBER DADOS DO WORKER (POST /api/atualizar-custos)
 # ====================================================================
 @app.post("/api/atualizar-custos")
 async def atualizar_custos(data: Dict[str, Any]):
-    global estado_financeiro
+    estado = get_estado()
     
     custo_hoje = data.get("custo_diario_total", 0.0)
     hoje_data = datetime.now()
-    dia_semana_hoje = hoje_data.weekday()
+    dia_semana_hoje = hoje_data.weekday() 
+    hoje_str = hoje_data.strftime('%Y-%m-%d')
 
-    print(f"--- [{hoje_data.strftime('%H:%M:%S')}] Processando Atualização ---")
+    print(f"--- [{hoje_data.strftime('%H:%M:%S')}] Processando Atualização via Redis ---")
 
-    # 1. LÓGICA DE RESET SEMANAL (Se for segunda-feira e a última vez foi outro dia)
-    if dia_semana_hoje == 0 and estado_financeiro["dia_da_ultima_coleta"] != 0:
-        print("🗓️ Nova semana detectada! Resetando total acumulado.")
-        estado_financeiro["total_acumulado_semana"] = 0.0
+    # 1. LÓGICA DE RESET SEMANAL (Segunda-feira é o dia 0)
+    # Se hoje é segunda e o último registro não foi segunda, resetamos o balde semanal.
+    if dia_semana_hoje == 0 and estado["dia_da_ultima_coleta"] != 0:
+        print("🗓️ Início de semana (Segunda)! Resetando acumulado semanal.")
+        estado["total_acumulado_semana"] = 0.0
 
-    # 2. LÓGICA DE ACUMULAÇÃO DIÁRIA
-    # Se o valor recebido agora é menor que o último, o discador resetou (virou o dia)
-    if custo_hoje < estado_financeiro["ultimo_custo_diario_recebido"]:
-        # Somamos o valor máximo alcançado ontem ao total da semana
-        estado_financeiro["total_acumulado_semana"] += estado_financeiro["ultimo_custo_diario_recebido"]
-        print(f"💰 Dia virou! R$ {estado_financeiro['ultimo_custo_diario_recebido']} somado ao acumulado semanal.")
+    # 2. LÓGICA DE ACUMULAÇÃO (Virada de Dia)
+    # Se o custo que chegou agora é menor que o último registrado, significa que o discador zerou (virou o dia)
+    if custo_hoje < estado["ultimo_custo_diario_recebido"]:
+        # Somamos o valor final do dia anterior ao acumulado da semana
+        estado["total_acumulado_semana"] += estado["ultimo_custo_diario_recebido"]
+        print(f"💰 Virada de dia detectada! R$ {estado['ultimo_custo_diario_recebido']:.2f} somados ao acumulado.")
 
-    # 3. ATUALIZAÇÃO DO ESTADO
-    estado_financeiro["ultimo_custo_diario_recebido"] = custo_hoje
-    estado_financeiro["dia_da_ultima_coleta"] = dia_semana_hoje
+    # 3. ATUALIZAÇÃO DO ESTADO NO REDIS
+    estado["ultimo_custo_diario_recebido"] = custo_hoje
+    estado["dia_da_ultima_coleta"] = dia_semana_hoje
+    salvar_estado(estado)
     
-    # Injetamos o cálculo final no JSON que vai para a Lovable
-    data["custo_semanal_acumulado"] = estado_financeiro["total_acumulado_semana"] + custo_hoje
-    estado_financeiro["cache_completo"] = data
+    # 4. PREPARAÇÃO DO CACHE PARA O FRONTEND
+    # O Semanal é: Tudo que acumulamos nos dias passados + o que gastamos até agora hoje
+    data["custo_semanal_acumulado"] = estado["total_acumulado_semana"] + custo_hoje
+    r.set("cache_lovable", json.dumps(data))
 
-    print(f"✅ Dashboard atualizado. Semanal: R$ {data['custo_semanal_acumulado']:.2f}")
+    print(f"✅ Redis Atualizado. Hoje: R$ {custo_hoje:.2f} | Semanal: R$ {data['custo_semanal_acumulado']:.2f}")
     return {"status": "sucesso"}
 
 # ====================================================================
@@ -74,18 +93,17 @@ async def atualizar_custos(data: Dict[str, Any]):
 # ====================================================================
 @app.get("/api/custos/")
 async def get_custos_financeiros():
-    global estado_financeiro
-
-    if not estado_financeiro["cache_completo"]:
+    cache = r.get("cache_lovable")
+    
+    if not cache:
         return {
             "saldo_atual": "Carregando...",
-            "custo_diario": "Carregando...",
-            "custo_semanal": "Carregando...",
+            "custo_diario": "0.00",
+            "custo_semanal": "0.00",
             "data_coleta": datetime.now().isoformat()
         }
 
-    return processar_dados_para_dashboard_formatado(estado_financeiro["cache_completo"])
-
+    return processar_dados_para_dashboard_formatado(json.loads(cache))
 
 # ====================================================================
 # ENDPOINTS OPERACIONAIS (Status e Upload)
@@ -105,12 +123,13 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
         campaign_id=data['campaign_id'],
         file_content_base64=data['file_content_base64'],
         mailling_name=data['mailling_name'],
-        login_crm=data.get('login_crm', 'DASHBOARD_MANUAL')
+        login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
     )
     return upload_result
 
 @app.get("/api/logs/")
 async def get_logs():
-    return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "SISTEMA", "status": "Sucesso", "registros": 0}]
+    return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS", "status": "Ativo", "registros": 0}]
+
 
 
