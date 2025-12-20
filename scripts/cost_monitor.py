@@ -44,7 +44,6 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         print("\n[DEBUG] 🟢 Iniciando contexto do Playwright...")
         async with async_playwright() as p:
             print("[DEBUG] 🚀 Lançando navegador Chromium...")
-            # Adicionados argumentos extras para evitar travamentos no Railway
             browser = await p.chromium.launch(
                 headless=headless, 
                 args=[
@@ -74,25 +73,38 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             print(f"[DEBUG] ✅ Saldo localizado: {saldo_text}")
 
             print("[DEBUG] 🖱️ Navegando para Relatórios Agrupados...")
-            await page.click('//*[@id="main-menu"]/li[5]/a') # Dropdown Relatórios
+            # Usando seletores de ID que são mais estáveis que XPath
+            await page.click('#main-menu > li:nth-child(5) > a') 
             await page.click("#relatorioAgrupadoLinhas")
             
             print("[DEBUG] ⏳ Aguardando tabela de custos (#tblMain)...")
             await page.wait_for_selector("#tblMain", timeout=45000)
 
             print("[DEBUG] 📊 Extraindo valores da tabela...")
-            discador = await page.text_content('//*[@id="tblMain"]/tbody/tr[1]/td[7]')
-            ura = await page.text_content('//*[@id="tblMain"]/tbody/tr[2]/td[7]')
             
-            print(f"[DEBUG] 📥 Valores brutos: Discador={discador}, URA={ura}")
+            # --- TENTATIVA LINHA 1 (DISCADOR) ---
+            discador_text = "0"
+            try:
+                discador_text = await page.locator('#tblMain > tbody > tr:nth-child(1) > td:nth-child(7)').text_content(timeout=10000)
+                print(f"[DEBUG] 📥 Valor Discador: {discador_text}")
+            except Exception:
+                print("[DEBUG] ⚠️ Aviso: Linha 1 (Discador) não encontrada ou vazia.")
+
+            # --- TENTATIVA LINHA 2 (URA) ---
+            ura_text = "0"
+            try:
+                ura_text = await page.locator('#tblMain > tbody > tr:nth-child(2) > td:nth-child(7)').text_content(timeout=10000)
+                print(f"[DEBUG] 📥 Valor URA: {ura_text}")
+            except Exception:
+                print("[DEBUG] ⚠️ Aviso: Linha 2 (URA) não encontrada ou vazia.")
 
             dados = {
                 "saldo_atual": clean_to_float(saldo_text),
-                "custo_diario_total": (clean_to_float(discador) or 0) + (clean_to_float(ura) or 0),
-                "custo_semanal_acumulado": 0.0 # Calculado na API via lógica de RAM
+                "custo_diario_total": (clean_to_float(discador_text) or 0) + (clean_to_float(ura_text) or 0),
+                "custo_semanal_acumulado": 0.0 # Calculado pela API Gateway
             }
             
-            print("[DEBUG] ✨ Coleta concluída com sucesso!")
+            print(f"[DEBUG] ✨ Coleta concluída! Total Diário: {dados['custo_diario_total']}")
             return dados
 
     except Exception as e:
@@ -134,5 +146,6 @@ if __name__ == '__main__':
         
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"| SALDO: {fmt['saldo_atual']} | DIA: {fmt['custo_diario']} |")
+
 
 
