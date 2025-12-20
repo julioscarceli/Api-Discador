@@ -13,7 +13,6 @@ load_dotenv()
 BASE_URL = os.getenv("NEXT_ROUTER_URL")
 USUARIO = os.getenv("NEXT_ROUTER_USER")
 SENHA = os.getenv("NEXT_ROUTER_PASS")
-# URL da sua API Gateway
 API_URL_INTERNA = "https://api-discador-production.up.railway.app/api/atualizar-custos"
 
 def clean_to_float(value):
@@ -63,7 +62,6 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.click("#relatorioAgrupadoLinhas")
             await page.wait_for_selector("#tblMain", timeout=45000)
 
-            # Extração resiliente
             discador_text = "0"
             try:
                 discador_text = await page.locator('#tblMain > tbody > tr:nth-child(1) > td:nth-child(7)').text_content(timeout=10000)
@@ -103,9 +101,12 @@ if __name__ == '__main__':
     dados_brutos = asyncio.run(coletar_custos_async())
 
     if not dados_brutos.get('erro'):
-        async asyncio.run(enviar_para_api(dados_brutos))
+        # CORREÇÃO DA SINTAXE AQUI:
+        asyncio.run(enviar_para_api(dados_brutos)) 
+        
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+
 
 
 
