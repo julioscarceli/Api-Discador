@@ -4,4 +4,6 @@ pandas
 httpx
 fastapi
 uvicorn
+redis
+
 
