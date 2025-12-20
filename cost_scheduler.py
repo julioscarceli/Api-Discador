@@ -8,8 +8,8 @@ from datetime import datetime, time as dt_time, timedelta
 INTERVALO_VERIFICACAO = 1800  # 30 minutos
 
 HORARIOS_ALVO = [
-    dt_time(15, 0),
-    dt_time(18, 30)
+    dt_time(18, 0),
+    dt_time(21, 30)
 ]
 
 last_run_time = None
@@ -49,3 +49,4 @@ if __name__ == "__main__":
         if should_run_now():
             run_worker()
         time.sleep(INTERVALO_VERIFICACAO)
+
