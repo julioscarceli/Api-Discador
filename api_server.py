@@ -49,28 +49,31 @@ async def atualizar_custos(data: Dict[str, Any]):
         
         print(f"\n[API-REDIS] 📥 Recebido: R$ {custo_hoje:.2f}")
 
-        # 1. RESET SEMANAL (SEGUNDA-FEIRA)
+        # 1. RESET SEMANAL (CORRIGIDO)
+        # Se for segunda, zeramos o acumulado ANTES de qualquer soma.
         if dia_semana == 0 and estado["dia_da_ultima_coleta"] != 0:
-            print("[API-LOG] 🗓️ Segunda-feira detectada. Resetando acumulado semanal.")
+            print("[API-LOG] 🗓️ Segunda-feira detectada. Zerando acumulado da semana passada.")
             estado["total_acumulado_semana"] = 0.0
+            # Importante: Se é segunda, o custo semanal DEVE ser igual ao diário no primeiro momento
+            total_semanal = custo_hoje 
+        else:
+            # Lógica normal para outros dias
+            if custo_hoje < estado["ultimo_custo_diario_recebido"]:
+                estado["total_acumulado_semana"] += estado["ultimo_custo_diario_recebido"]
+                print(f"[API-LOG] 💰 Virada de dia detectada no Redis.")
+            
+            total_semanal = estado["total_acumulado_semana"] + custo_hoje
 
-        # 2. VIRADA DE DIA (ACUMULAÇÃO)
-        if custo_hoje < estado["ultimo_custo_diario_recebido"]:
-            valor_ontem = estado["ultimo_custo_diario_recebido"]
-            estado["total_acumulado_semana"] += valor_ontem
-            print(f"[API-LOG] 💰 Virada de dia! Somado R$ {valor_ontem:.2f} ao acumulado Redis.")
-
-        # 3. PERSISTÊNCIA
+        # 2. PERSISTÊNCIA NO REDIS
         estado["ultimo_custo_diario_recebido"] = custo_hoje
         estado["dia_da_ultima_coleta"] = dia_semana
         r.set("estado_financeiro", json.dumps(estado))
         
-        # Calcula total e salva cache para Lovable
-        total_semanal = estado["total_acumulado_semana"] + custo_hoje
+        # 3. ATUALIZAÇÃO DO CACHE PARA LOVABLE
         data["custo_semanal_acumulado"] = total_semanal
         r.set("cache_lovable", json.dumps(data))
 
-        print(f"[API-SUCCESS] ✅ Redis Atualizado. Semanal: R$ {total_semanal:.2f}")
+        print(f"[API-SUCCESS] ✅ Redis Atualizado. Semanal Corrigido: R$ {total_semanal:.2f}")
         return {"status": "sucesso"}
     except Exception as e:
         print(f"[API-ERROR] ❌ Erro Redis: {e}")
@@ -100,6 +103,7 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
