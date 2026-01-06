@@ -12,6 +12,8 @@ load_dotenv()
 # --- IMPORTAÇÕES DO BACKEND ---
 from utils.mailing_api import get_active_campaign_metrics, api_import_mailling_upload
 from scripts.cost_monitor import processar_dados_para_dashboard_formatado
+from config.settings import ID_CAMPANHA_MG, ID_CAMPANHA_SP
+from utils.mailing_api import api_import_mailling_upload
 # --- FIM IMPORTAÇÕES ---
 
 app = FastAPI(title="Dialing Hub API Gateway")
@@ -99,17 +101,50 @@ async def get_status_metrics(server_id: str):
 
 @app.post("/api/upload/{server_id}")
 async def upload_mailing(server_id: str, data: Dict[str, Any]):
-    return await api_import_mailling_upload(
-        server=server_id.upper(),
-        campaign_id=data['campaign_id'],
-        file_content_base64=data['file_content_base64'],
-        mailling_name=data['mailling_name'],
-        login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
-    )
+    """
+    Endpoint que recebe o upload da Lovable.
+    O server_id vem da URL (MG ou SP).
+    """
+    try:
+        # Converte para maiúsculo para evitar erro de digitação (mg -> MG)
+        srv = server_id.upper()
+        
+        # Lógica do Porteiro: Define o ID da Gaveta baseado no Servidor
+        if srv == "SP":
+            id_oficial = ID_CAMPANHA_SP  # Será "10"
+        elif srv == "MG":
+            id_oficial = ID_CAMPANHA_MG  # Será "20"
+        else:
+            raise HTTPException(status_code=400, detail="Servidor inválido. Use MG ou SP.")
+
+        print(f"[API-UPLOAD] 📥 Recebido mailing para {srv} (ID: {id_oficial})")
+
+        # Chama a função principal que processa a Base64 e envia ao Discador
+        resultado = await api_import_mailling_upload(
+            server=srv,
+            campaign_id=id_oficial,
+            file_content_base64=data.get('file_content_base64'),
+            mailling_name=data.get('mailling_name', f"Upload_{srv}"),
+            login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
+        )
+
+        return {
+            "status": "sucesso",
+            "servidor": srv,
+            "campanha_id": id_oficial,
+            "resposta_discador": resultado
+        }
+
+    except Exception as e:
+        print(f"[API-ERROR] ❌ Erro no upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
