@@ -57,13 +57,25 @@ def extract_metrics(status_data, server_name):
 
 
 def _generate_metadata_line(campaign_id: str, mailling_name: str, server: str, login_crm: str = "AUTOMACAO") -> str:
-    """Cria a primeira linha de metadados (15 colunas) para o CSV."""
+    """Cria a primeira linha de metadados (15 colunas) para o CSV conforme documentação."""
     fila_nome = get_fila_name(server)
+    # Lista com exatamente 15 colunas (A até O)
     metadata = [
-        campaign_id, mailling_name, SAIDAS_VALOR, fila_nome,
-        dt.now().strftime('%Y-%m-%d %H:%M:%S'), login_crm,
-        dt.now().strftime('%Y-%m-%d'), "2025-12-31", "08:00:00", "20:00:00",
-        "1", "simultanea", "1,2,3,4,5", "", ""
+        str(campaign_id),                        # Coluna A: ID da campanha (10 ou 20)
+        str(mailling_name),                     # Coluna B: Nome do Mailing
+        str(SAIDAS_VALOR),                      # Coluna C: Quantidade de canais (ex: 130)
+        str(fila_nome),                         # Coluna D: Nome da fila ou "sem"
+        dt.now().strftime('%Y-%m-%d %H:%M:%S'), # Coluna E: Data e Hora do envio
+        str(login_crm),                         # Coluna F: Login do CRM
+        dt.now().strftime('%Y-%m-%d'),          # Coluna G: Data inicial
+        "2025-12-31",                           # Coluna H: Data final
+        "08:00:00",                             # Coluna I: Hora inicial
+        "20:00:00",                             # Coluna J: Hora final
+        "1",                                    # Coluna K: Quantidade de tentativas
+        "simultanea",                           # Coluna L: Velocidade
+        "1,2,3,4,5,6",                          # Coluna M: Dias da semana (Segunda a Sábado)
+        "",                                     # Coluna N: Áudio (Vazio se não usar)
+        ""                                      # Coluna O: Opções da URA (Vazio se não usar)
     ]
     return ";".join(metadata)
 
@@ -239,3 +251,4 @@ async def api_import_mailling_upload(server: str, campaign_id: str, file_content
 # e usa o httpx para enviar o Upload Multipart para o endpoint import_mailling.php.
 
 # É o endpoint que é disparado quando o usuário clica nos botões de Importação Manual.
+
