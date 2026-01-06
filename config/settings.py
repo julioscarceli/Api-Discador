@@ -25,3 +25,7 @@ API_TOKEN_NAME = "API_TOKEN" # Chave lida do Railway Secrets/Local .env
 # --- CAMINHOS DE MAILING LOCAIS (TESTE) ---
 LOCAL_MAILING_BASE_DIR = r"D:\Ferramentas\5. Verificação Final\MAILING DISCADOR"
 
+
+# IDs Oficiais das Campanhas no Discador
+ID_CAMPANHA_MG = "20"
+ID_CAMPANHA_SP = "10"
