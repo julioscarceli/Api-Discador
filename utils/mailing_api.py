@@ -252,3 +252,4 @@ async def api_import_mailling_upload(server: str, campaign_id: str, file_content
 
 # É o endpoint que é disparado quando o usuário clica nos botões de Importação Manual.
 
+
