@@ -13,7 +13,6 @@ load_dotenv()
 from utils.mailing_api import get_active_campaign_metrics, api_import_mailling_upload
 from scripts.cost_monitor import processar_dados_para_dashboard_formatado
 from config.settings import ID_CAMPANHA_MG, ID_CAMPANHA_SP
-from utils.mailing_api import api_import_mailling_upload
 # --- FIM IMPORTAÇÕES ---
 
 app = FastAPI(title="Dialing Hub API Gateway")
@@ -111,18 +110,19 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
         
         # Lógica do Porteiro: Define o ID da Gaveta baseado no Servidor
         if srv == "SP":
-            id_oficial = ID_CAMPANHA_SP  # Será "10"
+            id_oficial = ID_CAMPANHA_SP  # Pega de config.settings
         elif srv == "MG":
-            id_oficial = ID_CAMPANHA_MG  # Será "20"
+            id_oficial = ID_CAMPANHA_MG  # Pega de config.settings
         else:
             raise HTTPException(status_code=400, detail="Servidor inválido. Use MG ou SP.")
 
         print(f"[API-UPLOAD] 📥 Recebido mailing para {srv} (ID: {id_oficial})")
 
-        # Chama a função principal que processa a Base64 e envia ao Discador
+        # Chama a função atualizada em utils/mailing_api.py
+        # Esta função agora lida com o Base64, limpeza de telefones e layout de 15 colunas.
         resultado = await api_import_mailling_upload(
             server=srv,
-            campaign_id=id_oficial,
+            campaign_id=str(id_oficial),
             file_content_base64=data.get('file_content_base64'),
             mailling_name=data.get('mailling_name', f"Upload_{srv}"),
             login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
@@ -139,11 +139,10 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
         print(f"[API-ERROR] ❌ Erro no upload: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
