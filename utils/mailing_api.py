@@ -1,4 +1,4 @@
-# utils/mailing_api.py (VERSÃO FINAL COM CORREÇÃO DE PHP NOTICE)
+# utils/mailing_api.py (VERSÃO INTEGRADA E COMPLETA)
 
 import httpx
 import pandas as pd
@@ -7,7 +7,7 @@ import datetime
 import json
 from dotenv import load_dotenv
 import base64
-from io import StringIO
+from io import StringIO, BytesIO
 from datetime import datetime as dt  # Alias para evitar conflito com datetime
 import re  # 🚨 NOVO: Para limpeza de PHP Notice
 
@@ -56,86 +56,76 @@ def extract_metrics(status_data, server_name):
     return {"progresso": progresso, "saidas": saidas}
 
 
+# --- ATUALIZAÇÃO DA LINHA 1 (CONFIGURAÇÃO 2026 / 24H) ---
 def _generate_metadata_line(campaign_id: str, mailling_name: str, server: str, login_crm: str = "AUTOMACAO") -> str:
-    """Cria a primeira linha de metadados (15 colunas) para o CSV conforme documentação."""
-    fila_nome = get_fila_name(server)
-    # Lista com exatamente 15 colunas (A até O)
+    """Cria a primeira linha de metadados (15 colunas) garantindo discagem imediata."""
+    data_hoje = dt.now().strftime('%Y-%m-%d')
+    hora_agora = dt.now().strftime('%H:%M:%S')
+    
     metadata = [
-        str(campaign_id),                        # Coluna A: ID da campanha (10 ou 20)
-        str(mailling_name),                     # Coluna B: Nome do Mailing
-        str(SAIDAS_VALOR),                      # Coluna C: Quantidade de canais (ex: 130)
-        str(fila_nome),                         # Coluna D: Nome da fila ou "sem"
-        dt.now().strftime('%Y-%m-%d %H:%M:%S'), # Coluna E: Data e Hora do envio
-        str(login_crm),                         # Coluna F: Login do CRM
-        dt.now().strftime('%Y-%m-%d'),          # Coluna G: Data inicial
-        "2025-12-31",                           # Coluna H: Data final
-        "08:00:00",                             # Coluna I: Hora inicial
-        "20:00:00",                             # Coluna J: Hora final
-        "1",                                    # Coluna K: Quantidade de tentativas
-        "simultanea",                           # Coluna L: Velocidade
-        "1,2,3,4,5,6",                          # Coluna M: Dias da semana (Segunda a Sábado)
-        "",                                     # Coluna N: Áudio (Vazio se não usar)
-        ""                                      # Coluna O: Opções da URA (Vazio se não usar)
+        str(campaign_id),                # Coluna A: ID da campanha
+        str(mailling_name),              # Coluna B: Nome do Mailing
+        str(SAIDAS_VALOR),               # Coluna C: Canais
+        "sem",                           # Coluna D: Fila (URA Reversa usa 'sem')
+        f"{data_hoje} {hora_agora}",     # Coluna E: Data/Hora
+        str(login_crm),                  # Coluna F: Login CRM
+        data_hoje,                       # Coluna G: Data inicial
+        "2026-12-31",                    # Coluna H: Data final
+        "00:00:01",                      # Coluna I: Hora inicial
+        "23:59:59",                      # Coluna J: Hora final
+        "1",                             # Coluna K: Tentativas
+        "simultanea",                    # Coluna L: Velocidade
+        "1,2,3,4,5,6,7",                 # Coluna M: Dias da semana
+        "",                              # Coluna N: Audio
+        ""                               # Coluna O: Opções URA
     ]
     return ";".join(metadata)
 
 
+# --- ATUALIZAÇÃO DA TRANSFORMAÇÃO (LAYOUT SOLICITADO) ---
 def _transform_client_data(file_content_base64: str, campaign_id: str, mailling_name: str, server: str,
                            login_crm: str) -> str:
-    # ... (Lógica de transformação omitida, mantida do original)
+    """Transforma o Base64 no layout Telefone, Nome, CPF, Livre1, Chave validados localmente."""
     try:
         decoded_bytes = base64.b64decode(file_content_base64)
-        decoded_content = decoded_bytes.decode('latin-1')
+        # Usamos BytesIO para ler o binário decodificado corretamente
+        df_source = pd.read_csv(BytesIO(decoded_bytes), sep=';', encoding='latin-1', header=0, engine='python')
     except Exception as e:
-        raise Exception(f"Falha na decodificação do arquivo: {e}")
-
-    POS_NUMERO = 29;
-    POS_NOME = 0;
-    POS_CPF = 1;
-    POS_LIVRE1 = 2;
-    POS_CHAVE = 3
-
-    try:
-        df_source = pd.read_csv(StringIO(decoded_content), sep=';', header=None, engine='python')
-    except Exception as e:
-        raise Exception(f"Falha na leitura do CSV de origem pelo Pandas: {e}")
+        raise Exception(f"Falha na leitura do CSV: {e}")
 
     df_target = pd.DataFrame()
-    df_target[0] = df_source[POS_NUMERO].astype(str)
-    df_target[1] = ""
-    df_target[2] = df_source[POS_NOME]
-    df_target[3] = df_source[POS_CPF].astype(str)
-    df_target[4] = df_source[POS_LIVRE1].fillna('')
-    df_target[5] = df_source[POS_CHAVE].fillna('')
-    for i in range(6, 13): df_target[i] = ""
+    # Mapeamento exato das colunas conforme seu teste local de sucesso
+    df_target[0] = df_source.iloc[:, 29].astype(str).str.replace(r'\D', '', regex=True) # A: Numero
+    df_target[1] = ""                                                                 # B: Vazio (Obrigatório)
+    df_target[2] = df_source.iloc[:, 0].astype(str).str.slice(0, 50)                   # C: Nome
+    df_target[3] = df_source.iloc[:, 1].astype(str).str.replace(r'\D', '', regex=True) # D: CPF
+    df_target[4] = df_source.iloc[:, 2].fillna('').astype(str)                         # E: LIVRE1
+    df_target[5] = df_source.iloc[:, 3].fillna('').astype(str)                         # F: CHAVE
+    
+    # Completa as 15 colunas obrigatórias
+    for i in range(6, 15): 
+        df_target[i] = ""
 
     metadata_line = _generate_metadata_line(campaign_id, mailling_name, server, login_crm)
     temp_target_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_api_upload.csv")
 
-    with open(temp_target_path, 'w', encoding='latin-1') as f:
-        f.write(metadata_line + "\n")
-    df_target.iloc[1:].to_csv(temp_target_path, mode='a', sep=';', header=False, index=False, encoding='latin-1')
+    with open(temp_target_path, 'w', encoding='latin-1', newline='') as f:
+        f.write(metadata_line + "\r\n")
+        df_target.to_csv(f, sep=';', header=False, index=False, encoding='latin-1', lineterminator='\r\n')
+    
     return temp_target_path
 
 
 def _clean_php_output(response_text: str, server: str) -> str:
     """Limpa o output de PHP Notices e retorna apenas a string JSON."""
-
-    # Busca por uma chave de JSON ({ ou [) no início da string
     json_start_match = re.search(r"(\{.*|\[.*)", response_text, re.DOTALL)
-
     if json_start_match:
-        # Extrai e limpa a string que começa com o JSON
         clean_json_text = json_start_match.group(1).strip()
         return clean_json_text
-
-    # Se não encontrar, retorna a string original para que o JSONDecodeError ocorra e seja logado
-    print(f"[{server}] ⚠️ ALERTA: Não foi possível limpar a resposta PHP. Resposta bruta original:")
-    print(response_text[:200])
     return response_text
 
 
-# --- API CALL 1: LISTAR CAMPANHAS ---
+# --- API CALL 1: LISTAR CAMPANHAS (Mantida íntegra) ---
 async def api_list_campaigns(server: str):
     """Lista todas as campanhas ativas."""
     url = f"{get_base_url_for_api(server)}list_campaign.php"
@@ -143,21 +133,14 @@ async def api_list_campaigns(server: str):
     async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
         response = await client.post(url, data=data)
         response.raise_for_status()
-
-        # 🚨 CORREÇÃO DE PHP NOTICE
         response_text_clean = _clean_php_output(response.text.strip(), server)
-
         try:
             return json.loads(response_text_clean)
         except json.JSONDecodeError as e:
-            # 🚨 Loga o erro após a tentativa de limpeza
-            print(f"[{server}] ❌ ERRO JSON LIST_CAMPAIGNS (Decodificação Falhou). Resposta limpa:")
-            print(response_text_clean[:200])
             raise Exception(f"API retornou formato inválido (não é JSON).") from e
 
-        # --- API CALL 2: OBTER STATUS DA CAMPANHA ---
 
-
+# --- API CALL 2: OBTER STATUS DA CAMPANHA (Mantida íntegra) ---
 async def api_get_campaign_status(server: str, campaign_id: str):
     """Obtém status detalhado de uma campanha (necessário para progresso)."""
     url = f"{get_base_url_for_api(server)}campaign_exec.php"
@@ -165,91 +148,66 @@ async def api_get_campaign_status(server: str, campaign_id: str):
     async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
         response = await client.get(url, params=params)
         response.raise_for_status()
-
-        # 🚨 CORREÇÃO DE PHP NOTICE
         response_text_clean = _clean_php_output(response.text.strip(), server)
-
         try:
             return json.loads(response_text_clean)
         except json.JSONDecodeError as e:
-            # 🚨 ESTA LINHA DEVE SER ACIONADA PARA MOSTRAR A RESPOSTA BRUTA
-            print(f"[{server}] ❌ ERRO JSON CAMPAIGN_EXEC. Resposta Bruta Inesperada:")
-            print(response.text[:500])  # Mostra os primeiros 500 caracteres
             raise Exception(f"API retornou formato inválido (não é JSON).") from e
 
 
-# ... (restante das funções extract_metrics, get_active_campaign_metrics e api_import_mailling_upload permanecem as mesmas)
-
+# --- MÉTRICAS GLOBAIS (Mantida íntegra) ---
 async def get_active_campaign_metrics(server: str) -> dict:
-    # ... (código mantido, ele depende das chamadas de cima estarem corretas)
     try:
         campaigns = await api_list_campaigns(server)
-
         if not campaigns or not campaigns[0].get('id'):
             return {"nome": "Nenhuma Campanha Ativa", "progresso": "0%", "saidas": "0", "id": None}
-
         active_campaign = campaigns[0]
         campaign_id = active_campaign.get('id')
-
         status_data = await api_get_campaign_status(server, campaign_id)
         metrics = extract_metrics(status_data, server)
-
         return {
             "nome": active_campaign.get('nome', 'N/A'),
             "progresso": metrics['progresso'],
             "saidas": metrics['saidas'],
             "id": campaign_id
         }
-
     except Exception as e:
-        print(f"[{server}] ❌ ERRO CRÍTICO NA API (Master Metric):")
-        print(f"[{server}] Detalhe: {e}")
         return {"nome": "ERRO API", "progresso": "N/A", "saidas": "N/A", "id": None}
 
 
+# --- API CALL 3: UPLOAD MAILING (ATUALIZADO COM AS CHAVES VALIDALAS) ---
 async def api_import_mailling_upload(server: str, campaign_id: str, file_content_base64: str, mailling_name: str,
                                      login_crm: str):
-    """
-    Recebe o conteúdo Base64 do Dash, transforma, e envia o arquivo Multipart para a API.
-    """
+    """Envia o arquivo para a API usando as chaves validadas: file e import."""
     temp_file_path = None
-
     try:
-        # 1. TRANSFORMAÇÃO E GERAÇÃO DO ARQUIVO TEMPORÁRIO (USANDO O CONTEÚDO BASE64)
+        # 1. Transforma os dados usando as novas regras de layout
         temp_file_path = _transform_client_data(file_content_base64, campaign_id, mailling_name, server, login_crm)
 
-        # 2. CONFIGURAÇÃO E ENVIO MULTIPART/FORM-DATA
+        # 2. Configuração de envio conforme seu teste local integracao_local_final.py
         url = f"{get_base_url_for_api(server)}import_mailling.php"
 
         with open(temp_file_path, 'rb') as f:
-            files = {'import': ('temp_api_upload.csv', f, 'text/csv')}
-            data = {'token': API_TOKEN, 'ok': 'ok'}
+            # CHAVE MÁGICA: O arquivo deve ser 'file' e o comando de texto deve ser 'import'
+            files = {'file': ('upload.csv', f, 'text/csv')}
+            data = {'token': API_TOKEN, 'import': 'ok'}
 
-            async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
                 response = await client.post(url, data=data, files=files)
                 response.raise_for_status()
 
             raw_response_text = response.text
-
-            # 🚨 CORREÇÃO AQUI TAMBÉM: Limpar o output de Notices antes de tentar JSON
             response_text_clean = _clean_php_output(raw_response_text.strip(), server)
 
             try:
                 return json.loads(response_text_clean)
             except json.JSONDecodeError:
-                raise Exception(f"RESPOSTA BRUTA DO SERVIDOR (Não é JSON): {raw_response_text[:1000]}...")
-
+                raise Exception(f"RESPOSTA DO SERVIDOR: {raw_response_text[:500]}")
 
     except Exception as e:
-        raise Exception(f"ERRO CRÍTICO NA REQUISIÇÃO HTTP: {e}")
-
+        raise Exception(f"ERRO CRÍTICO NO UPLOAD: {e}")
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
-
-# API Call 3. Recebe a Base64, chama _transform_client_data para obter o arquivo temporário,
-# e usa o httpx para enviar o Upload Multipart para o endpoint import_mailling.php.
-
-# É o endpoint que é disparado quando o usuário clica nos botões de Importação Manual.
 
 
