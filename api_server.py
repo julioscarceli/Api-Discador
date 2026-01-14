@@ -1,6 +1,7 @@
 import os
 import json
 import redis
+import httpx  # Adicionado para enviar logs ao import-monitor
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
@@ -12,6 +13,7 @@ load_dotenv()
 # --- IMPORTAÇÕES DO BACKEND ---
 from utils.mailing_api import get_active_campaign_metrics, api_import_mailling_upload
 from scripts.cost_monitor import processar_dados_para_dashboard_formatado
+from scripts.restarter_campaign import finalize_campaign_only # Adicionado para limpeza
 from config.settings import ID_CAMPANHA_MG, ID_CAMPANHA_SP
 # --- FIM IMPORTAÇÕES ---
 
@@ -29,6 +31,25 @@ app.add_middleware(
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
+# URL do seu worker de monitoramento dedicado
+LOG_WORKER_URL = "https://api-discador-production-36c2.up.railway.app/api/logs/import"
+
+async def report_to_monitor(region: str, action: str, status: str, message: str, file_name: str = "N/A"):
+    """Função auxiliar para enviar logs para o worker isolado no Railway"""
+    payload = {
+        "region": region,
+        "action": action,
+        "status": status,
+        "message": message,
+        "file_name": file_name,
+        "timestamp": datetime.now().strftime("%H:%M:%S")
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(LOG_WORKER_URL, json=payload, timeout=5.0)
+    except Exception as e:
+        print(f"Erro ao reportar log ao monitor: {e}")
+
 def get_estado_redis():
     estado = r.get("estado_financeiro")
     if estado:
@@ -36,7 +57,7 @@ def get_estado_redis():
     return {
         "total_acumulado_semana": 0.0,
         "ultimo_custo_diario_recebido": 0.0,
-        "dia_da_ultima_coleta": -1, # 0=Segunda
+        "dia_da_ultima_coleta": -1, 
         "ultima_data_reset": ""
     }
 
@@ -46,37 +67,25 @@ async def atualizar_custos(data: Dict[str, Any]):
         estado = get_estado_redis()
         custo_hoje = data.get("custo_diario_total", 0.0)
         hoje = datetime.now()
-        dia_semana = hoje.weekday() # 0=Segunda, 5=Sábado
+        dia_semana = hoje.weekday() 
         
         print(f"\n[API-REDIS] 📥 Recebido do Worker: R$ {custo_hoje:.2f}")
 
-        # ============================================================
-        # 🔄 LÓGICA DE RESET DA SEGUNDA-FEIRA
-        # ============================================================
         if dia_semana == 0:
-            # Se é segunda, não importa o que tinha antes, o acumulado é ZERO.
             if estado["total_acumulado_semana"] != 0.0:
                 print("[API-LOG] 🗓️ É SEGUNDA-FEIRA! Zerando resíduos da semana passada.")
                 estado["total_acumulado_semana"] = 0.0
-            
-            total_semanal = custo_hoje # Na segunda: Semanal == Diário
+            total_semanal = custo_hoje 
         else:
-            # Lógica para Terça a Sábado:
-            # Se o custo atual for menor que o último, o dia virou (acumula o dia anterior)
             if custo_hoje < estado["ultimo_custo_diario_recebido"]:
                 estado["total_acumulado_semana"] += estado["ultimo_custo_diario_recebido"]
                 print(f"[API-LOG] 💰 Virada de dia detectada! Acumulado: R$ {estado['total_acumulado_semana']:.2f}")
-            
             total_semanal = estado["total_acumulado_semana"] + custo_hoje
 
-        # ============================================================
-        # 💾 PERSISTÊNCIA E CACHE
-        # ============================================================
         estado["ultimo_custo_diario_recebido"] = custo_hoje
         estado["dia_da_ultima_coleta"] = dia_semana
         r.set("estado_financeiro", json.dumps(estado))
         
-        # Atualiza o JSON que vai para a Lovable
         data["custo_semanal_acumulado"] = total_semanal
         r.set("cache_lovable", json.dumps(data))
 
@@ -100,31 +109,41 @@ async def get_status_metrics(server_id: str):
 
 @app.post("/api/upload/{server_id}")
 async def upload_mailing(server_id: str, data: Dict[str, Any]):
-    """
-    Endpoint que recebe o upload da Lovable.
-    O server_id vem da URL (MG ou SP).
-    """
     try:
-        # Converte para maiúsculo para evitar erro de digitação (mg -> MG)
         srv = server_id.upper()
+        mailling_name = data.get('mailling_name', f"Upload_{srv}")
         
-        # Lógica do Porteiro: Define o ID da Gaveta baseado no Servidor
         if srv == "SP":
-            id_oficial = ID_CAMPANHA_SP  # Pega de config.settings
+            id_oficial = ID_CAMPANHA_SP 
         elif srv == "MG":
-            id_oficial = ID_CAMPANHA_MG  # Pega de config.settings
+            id_oficial = ID_CAMPANHA_MG 
         else:
             raise HTTPException(status_code=400, detail="Servidor inválido. Use MG ou SP.")
 
         print(f"[API-UPLOAD] 📥 Recebido mailing para {srv} (ID: {id_oficial})")
 
-        # Chama a função atualizada em utils/mailing_api.py
-        # Esta função agora lida com o Base64, limpeza de telefones e layout de 15 colunas.
+        # ============================================================
+        # 🧹 PASSO 1: LIMPEZA PREVENTIVA (ITEM 3)
+        # ============================================================
+        await report_to_monitor(srv, "Limpeza UI", "processando", "Finalizando campanha antiga via UI antes do upload", mailling_name)
+        
+        # Chama o robô Playwright que faz a limpeza física na tela do discador
+        limpeza_sucesso = await finalize_campaign_only(server=srv)
+        
+        if limpeza_sucesso:
+            await report_to_monitor(srv, "Limpeza UI", "sucesso", "Campanha antiga finalizada com sucesso", mailling_name)
+        else:
+            # Reportamos que não foi possível limpar, mas seguimos com o upload
+            await report_to_monitor(srv, "Limpeza UI", "erro", "Não foi possível finalizar campanha (pode não haver nenhuma ativa)", mailling_name)
+
+        # ============================================================
+        # 🚀 PASSO 2: UPLOAD DO NOVO MAILING
+        # ============================================================
         resultado = await api_import_mailling_upload(
             server=srv,
             campaign_id=str(id_oficial),
             file_content_base64=data.get('file_content_base64'),
-            mailling_name=data.get('mailling_name', f"Upload_{srv}"),
+            mailling_name=mailling_name,
             login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
         )
 
@@ -137,11 +156,14 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
 
     except Exception as e:
         print(f"[API-ERROR] ❌ Erro no upload: {str(e)}")
+        # Reporta o erro fatal ao monitor para você saber por que parou
+        await report_to_monitor(server_id.upper(), "Erro Fatal", "erro", str(e), data.get('mailling_name', 'N/A'))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
