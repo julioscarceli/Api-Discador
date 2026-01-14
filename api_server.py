@@ -1,7 +1,7 @@
 import os
 import json
 import redis
-import httpx  # Adicionado para enviar logs ao import-monitor
+import httpx  # Necessário para enviar logs ao import-monitor
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
@@ -13,8 +13,15 @@ load_dotenv()
 # --- IMPORTAÇÕES DO BACKEND ---
 from utils.mailing_api import get_active_campaign_metrics, api_import_mailling_upload
 from scripts.cost_monitor import processar_dados_para_dashboard_formatado
-from scripts.restarter_campaign import finalize_campaign_only # Adicionado para limpeza
 from config.settings import ID_CAMPANHA_MG, ID_CAMPANHA_SP
+
+# 🚨 AJUSTE DE IMPORTAÇÃO (Item 3): Nome corrigido de 'restarter_campaign' para 'restart_campaign'
+try:
+    from scripts.restart_campaign import finalize_campaign_only
+except ImportError:
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from scripts.restart_campaign import finalize_campaign_only
 # --- FIM IMPORTAÇÕES ---
 
 app = FastAPI(title="Dialing Hub API Gateway")
@@ -31,11 +38,11 @@ app.add_middleware(
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
-# URL do seu worker de monitoramento dedicado
+# URL do seu worker de monitoramento dedicado no Railway
 LOG_WORKER_URL = "https://api-discador-production-36c2.up.railway.app/api/logs/import"
 
 async def report_to_monitor(region: str, action: str, status: str, message: str, file_name: str = "N/A"):
-    """Função auxiliar para enviar logs para o worker isolado no Railway"""
+    """Envia logs para o worker de import-monitor para acompanhamento em tempo real"""
     payload = {
         "region": region,
         "action": action,
@@ -127,17 +134,16 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
         # ============================================================
         await report_to_monitor(srv, "Limpeza UI", "processando", "Finalizando campanha antiga via UI antes do upload", mailling_name)
         
-        # Chama o robô Playwright que faz a limpeza física na tela do discador
+        # Chama a função do script restart_campaign.py para limpar a tela do discador
         limpeza_sucesso = await finalize_campaign_only(server=srv)
         
         if limpeza_sucesso:
             await report_to_monitor(srv, "Limpeza UI", "sucesso", "Campanha antiga finalizada com sucesso", mailling_name)
         else:
-            # Reportamos que não foi possível limpar, mas seguimos com o upload
-            await report_to_monitor(srv, "Limpeza UI", "erro", "Não foi possível finalizar campanha (pode não haver nenhuma ativa)", mailling_name)
+            await report_to_monitor(srv, "Limpeza UI", "erro", "Não foi possível finalizar campanha via UI", mailling_name)
 
         # ============================================================
-        # 🚀 PASSO 2: UPLOAD DO NOVO MAILING
+        # 🚀 PASSO 2: UPLOAD DO NOVO MAILING (ITEM 4)
         # ============================================================
         resultado = await api_import_mailling_upload(
             server=srv,
@@ -156,13 +162,13 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
 
     except Exception as e:
         print(f"[API-ERROR] ❌ Erro no upload: {str(e)}")
-        # Reporta o erro fatal ao monitor para você saber por que parou
         await report_to_monitor(server_id.upper(), "Erro Fatal", "erro", str(e), data.get('mailling_name', 'N/A'))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
