@@ -1,15 +1,16 @@
-# utils/login_manager.py (Versão FINAL DE DEPLOY)
+# utils/login_manager.py (Versão FINAL DE DEPLOY - 100% INTEGRADA)
 
 import os
+import asyncio
 from dotenv import load_dotenv
-from playwright.async_api import Page, BrowserContext, Browser 
+from playwright.async_api import Page, BrowserContext, Browser, async_playwright
 from config.settings import (
     LOGIN_URL_MG, 
     LOGIN_URL_SP, 
     BASE_URL_MG, 
     BASE_URL_SP,
     FILA_NOME_MG, 
-    FILA_NOME_SP # <-- HEADLESS_MODE foi removido desta lista
+    FILA_NOME_SP
 )
 
 # Carrega as variáveis de ambiente (Credenciais e Headless)
@@ -24,7 +25,7 @@ HEADLESS_MODE = os.getenv("HEADLESS_MODE", "False").lower() == "true"
 # --------------------------------------------------------
 
 
-# --- Funções Auxiliares (AGORA USAM O PARÂMETRO 'server') ---
+# --- Funções Auxiliares (MANTIDAS CONFORME SEU ORIGINAL) ---
 def get_base_url(server: str) -> str:
     """Retorna a URL base (MG ou SP) baseada no parâmetro 'server'."""
     if server.upper() == "SP":
@@ -90,6 +91,50 @@ async def create_context_and_login(playwright_instance, server: str) -> tuple[Br
         if 'browser' in locals() and browser:
             await browser.close()
         return None, None, None
+
+
+# --- 🚨 NOVA CLASSE: INTEGRADA PARA CAPTURA DE SESSÃO API ---
+class LoginManager:
+    """
+    Classe que orquestra a captura do PHPSESSID para permitir
+    que a API realize ações autenticadas sem retornar HTML de login.
+    """
+    
+    async def get_active_session(self, server: str) -> dict:
+        """
+        Inicia um navegador temporário, realiza o login via UI
+        e extrai os cookies de sessão.
+        """
+        server_name = get_server_name(server)
+        print(f"[{server_name}] 🔑 Capturando sessão ativa para vínculo de campanha...")
+        
+        async with async_playwright() as p:
+            # Reutiliza sua função original para garantir consistência
+            context, page, browser = await create_context_and_login(p, server)
+            
+            if not context:
+                print(f"[{server_name}] ❌ Não foi possível capturar a sessão.")
+                return {}
+
+            # Extrai os cookies gerados pelo navegador após o login de sucesso
+            browser_cookies = await context.cookies()
+            
+            # Fecha o navegador imediatamente para liberar memória (Importante no Railway)
+            await browser.close()
+
+            # Formata o dicionário de cookies para o formato esperado pelo HTTPIX/Requests
+            session_dict = {}
+            for cookie in browser_cookies:
+                if cookie['name'] == 'PHPSESSID':
+                    session_dict['PHPSESSID'] = cookie['value']
+            
+            if 'PHPSESSID' in session_dict:
+                print(f"[{server_name}] 🎫 PHPSESSID capturado com sucesso.")
+            else:
+                print(f"[{server_name}] ⚠️ PHPSESSID não encontrado nos cookies.")
+                
+            return session_dict
+
 
 
 
