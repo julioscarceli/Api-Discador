@@ -125,6 +125,43 @@ def _clean_php_output(response_text: str, server: str) -> str:
     return response_text
 
 
+# --- 🚨 NOVA FUNÇÃO: CRIAÇÃO DE CAMPANHA (VINCULADOR) ---
+async def api_create_campaign(server: str, mailing_name: str, cookies: dict):
+    """
+    Cria a campanha no discador e retorna o ID gerado conforme validado no Postman.
+    """
+    url = f"{get_base_url_for_api(server)}create_poll.php"
+    
+    # Limpa o nome do arquivo para usar como título
+    titulo_limpo = mailing_name.replace(".csv", "").replace(".CSV", "")
+    
+    payload = {
+        'token': API_TOKEN,
+        'titulo': titulo_limpo,
+        'descriçao': f"Gerada via API: {titulo_limpo}",
+        'api': 'on',
+        'url_api': "https://app.aquicob.com.br/index.php?a=acionamento&b=acionamento&pes_codigo={INFO1}&pop_up=1&loj_codigo={INFO2}"
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    async with httpx.AsyncClient(verify=False, cookies=cookies, headers=headers) as client:
+        try:
+            response = await client.post(url, data=payload, timeout=20.0)
+            response_text_clean = _clean_php_output(response.text.strip(), server)
+            dados = json.loads(response_text_clean)
+            
+            # Retorna o ID (ex: "205") se o sucesso for verdadeiro no JSON
+            if dados.get("success") is True:
+                return dados.get("id")
+            return None
+        except Exception as e:
+            print(f"❌ Erro técnico ao criar campanha: {e}")
+            return None
+
+
 # --- API CALL 1: LISTAR CAMPANHAS (Mantida íntegra) ---
 async def api_list_campaigns(server: str):
     """Lista todas as campanhas ativas."""
@@ -209,5 +246,12 @@ async def api_import_mailling_upload(server: str, campaign_id: str, file_content
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+
+
+
+
+
+
 
 
