@@ -1,49 +1,58 @@
-# cost_scheduler.py (Versão com nome de função preservado)
+# cost_scheduler.py (ATUALIZADO PARA FUSO HORÁRIO BRASÍLIA)
 
 import time
 import subprocess
 import sys
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
-# 30 minutos em segundos (seu valor original)
+# Intervalo de 30 minutos em segundos
 INTERVALO_VERIFICACAO = 1800 
 
 def should_run_now():
     """
-    Nova lógica: Retorna True se for Seg-Sex entre 10h e 18h.
+    Verifica se o horário atual (em UTC) corresponde à janela 
+    das 10:00 às 18:00 de Brasília (UTC-3).
     """
-    now = datetime.now()
-    # weekday() <= 4 garante que é Segunda a Sexta
-    is_weekday = now.weekday() <= 4
-    # Verifica se está entre 10:00 e 17:59
-    is_business_time = 10 <= now.hour < 18
+    now = datetime.utcnow() # Usamos UTC explicitamente para evitar confusão
     
-    return is_weekday and is_business_time
+    # 1. Dia da semana (Segunda a Sexta)
+    if now.weekday() >= 5:
+        return False
+        
+    # 2. Janela de Horário:
+    # 10:00 BRT -> 13:00 UTC
+    # 18:00 BRT -> 21:00 UTC
+    hora_utc = now.hour
+    
+    if 13 <= hora_utc < 21:
+        return True
+        
+    return False
 
 def run_worker():
-    print(f"[{datetime.now().strftime('%d/%m %H:%M:%S')}] 🚀 Iniciando scraping de custos...")
+    # ... (sua função run_worker original sem alterações)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Executando coleta...")
     try:
-        # Chama o seu script de monitoramento
         subprocess.run([sys.executable, "scripts/cost_monitor.py"], check=True)
     except Exception as e:
-        print(f"❌ Erro no worker: {e}")
+        print(f"Erro no worker: {e}")
 
 if __name__ == "__main__":
-    print("Agendador de Custos iniciado no Railway...")
+    print("Agendador de Custos (Fuso Brasília) Iniciado...")
     
-    # --- GATILHO DE VISUALIZAÇÃO IMEDIATA ---
+    # Execução inicial para popular o dashboard
     run_worker() 
-    # ----------------------------------------
 
     while True:
-        # Aqui a função should_run_now agora checa a JANELA e não mais a HORA FIXA
         if should_run_now():
             run_worker()
-            print(f"💤 Ciclo comercial completo. Aguardando 30 min...")
+            print(f"💤 Aguardando 30 minutos...")
             time.sleep(INTERVALO_VERIFICACAO)
         else:
-            # Se estiver fora do horário, espera 10 min antes de checar de novo
-            print(f"[{datetime.now().strftime('%H:%M')}] Fora do horário comercial. Dormindo...")
-            time.sleep(600)
+            # Cálculo apenas para exibição no log de Brasília
+            hora_brt = (datetime.utcnow().hour - 3) % 24
+            print(f"[{hora_brt:02d}:{datetime.utcnow().minute:02d}] Fora do horário comercial. Dormindo...")
+            time.sleep(600) # Checa a cada 10 min
+
 
 
