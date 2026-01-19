@@ -22,36 +22,50 @@ SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
 
 # scripts/restart_campaign.py (Ajuste de Precisão no Nome)
 
+
 async def get_current_campaign_name(page) -> str | None:
     """
-    Captura o nome exato da campanha, limpando duplicatas e espaços.
+    Captura o nome da campanha com maior tolerância e verificação de carga.
     """
     try:
-        # Aguarda o elemento de pendentes carregar
-        await page.wait_for_selector(SELETOR_PAINEL_PENDENTES, state='visible', timeout=20000) 
+        # 1. Aguarda a página estabilizar após o clique em 'Enviar'
+        print("[DEBUG] Aguardando estabilização da rede para ler campanha...")
+        await page.wait_for_load_state("networkidle", timeout=30000)
         
-        # Localiza o texto que contém o padrão do seu mailing
-        # O seletor 'text=/MAILING_DISCADOR/' é mais preciso para o seu caso
-        campaign_elements = page.locator('text=/MAILING_DISCADOR/')
+        # 2. Tenta localizar o seletor com um timeout maior (30s)
+        # Se o 'Contatos pendentes' não aparecer, tentamos buscar pelo texto 'Campanha em execução'
+        try:
+            await page.wait_for_selector('text=Contatos pendentes', state='visible', timeout=30000)
+        except:
+            print("[DEBUG] Aviso: 'Contatos pendentes' não apareceu, tentando busca direta por MAILING...")
+
+        # 3. Busca flexível por qualquer elemento que contenha MAILING_DISCADOR
+        # Usamos um seletor que ignore maiúsculas/minúsculas
+        campaign_elements = page.locator('text=/MAILING_DISCADOR/i')
+        
+        # Espera pelo menos um elemento de mailing estar visível
+        await campaign_elements.first.wait_for(state='visible', timeout=15000)
+        
         all_texts = await campaign_elements.all_inner_texts()
+        print(f"[DEBUG] Textos brutos capturados: {all_texts}")
 
         if not all_texts:
             return None
 
-        # Pega o primeiro texto encontrado
+        # 4. Limpeza rigorosa (Baseada no seu print: texto duplicado e quebras de linha)
+        # Pegamos o primeiro, dividimos por linha e limpamos espaços
         raw_text = all_texts[0].strip()
-        
-        # LIMPEZA CRÍTICA: Se o texto vier com quebra de linha ou duplicado (como no print)
-        # nós pegamos apenas a primeira parte antes da quebra de linha ou do espaço duplo
         clean_name = raw_text.split('\n')[0].split('  ')[0].strip()
         
-        # Remove também qualquer resquício de porcentagem se houver (ex: 11.11%)
-        clean_name = clean_name.replace('0.00%', '').replace('11.11%', '').strip()
+        # Remove sufixos de porcentagem se o Playwright capturar o label junto
+        import re
+        clean_name = re.sub(r'\d+\.?\d*%', '', clean_name).strip()
 
-        print(f"[DEBUG] Nome final limpo para seleção: '{clean_name}'")
+        print(f"[DEBUG] Nome identificado para o dropdown: '{clean_name}'")
         return clean_name
+
     except Exception as e:
-        print(f"[DEBUG] Erro ao extrair nome: {e}")
+        print(f"[DEBUG] Erro crítico na extração: {e}")
         return None
 
 
@@ -215,6 +229,7 @@ if __name__ == '__main__':
     asyncio.run(restart_campaign(server="MG"))
     # Loga, extrai nome da campanha em execução, finaliza campanha,
     # reconfigura os 3 dropdowns (Campanha, Telefone, Fila) e envia o mailing.
+
 
 
 
