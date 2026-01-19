@@ -20,23 +20,38 @@ SELETOR_BOTAO_TELEFONE_ABRIR = 'xpath=//*[@id="Discador"]/div[1]/div/div/div/div
 SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
 
 
+# scripts/restart_campaign.py (Ajuste de Precisão no Nome)
+
 async def get_current_campaign_name(page) -> str | None:
     """
-    Função para extrair o nome da campanha atualmente em execução, com tolerância de 20s.
+    Captura o nome exato da campanha, limpando duplicatas e espaços.
     """
     try:
-        # AUMENTO DE TIMEOUT: 20s para o painel de pendentes aparecer (Máxima tolerância)
+        # Aguarda o elemento de pendentes carregar
         await page.wait_for_selector(SELETOR_PAINEL_PENDENTES, state='visible', timeout=20000) 
         
-        campaign_elements = page.locator('text=/MAILING_/')
+        # Localiza o texto que contém o padrão do seu mailing
+        # O seletor 'text=/MAILING_DISCADOR/' é mais preciso para o seu caso
+        campaign_elements = page.locator('text=/MAILING_DISCADOR/')
         all_texts = await campaign_elements.all_inner_texts()
 
-        for text in all_texts:
-            clean_text = text.strip()
-            if clean_text.startswith("MAILING_DISCADOR"):
-                return clean_text
-        return None
+        if not all_texts:
+            return None
+
+        # Pega o primeiro texto encontrado
+        raw_text = all_texts[0].strip()
+        
+        # LIMPEZA CRÍTICA: Se o texto vier com quebra de linha ou duplicado (como no print)
+        # nós pegamos apenas a primeira parte antes da quebra de linha ou do espaço duplo
+        clean_name = raw_text.split('\n')[0].split('  ')[0].strip()
+        
+        # Remove também qualquer resquício de porcentagem se houver (ex: 11.11%)
+        clean_name = clean_name.replace('0.00%', '').replace('11.11%', '').strip()
+
+        print(f"[DEBUG] Nome final limpo para seleção: '{clean_name}'")
+        return clean_name
     except Exception as e:
+        print(f"[DEBUG] Erro ao extrair nome: {e}")
         return None
 
 
@@ -200,6 +215,7 @@ if __name__ == '__main__':
     asyncio.run(restart_campaign(server="MG"))
     # Loga, extrai nome da campanha em execução, finaliza campanha,
     # reconfigura os 3 dropdowns (Campanha, Telefone, Fila) e envia o mailing.
+
 
 
 
