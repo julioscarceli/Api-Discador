@@ -52,7 +52,7 @@ def get_server_name(server: str) -> str:
 async def create_context_and_login(playwright_instance, server: str) -> tuple[BrowserContext, Page, Browser] | tuple[None, None, None]:
     """
     Cria o contexto do navegador, realiza o login e retorna (context, page, browser).
-    Aplica tolerância de 60 segundos nas ações de rede críticas.
+    Aplica tolerância aumentada para lidar com lentidão do servidor.
     """
     login_url = get_login_url(server) 
     server_name = get_server_name(server)
@@ -69,19 +69,20 @@ async def create_context_and_login(playwright_instance, server: str) -> tuple[Br
         page = await context.new_page()
 
         # 2. Navega para a URL de Login
-        # Tolerância de 60s
-        await page.goto(login_url, timeout=60000) 
+        # Tolerância aumentada para 90s para suportar rede instável
         print(f"[{server_name}] Navegando para: {login_url}")
+        await page.goto(login_url, timeout=90000, wait_until="domcontentloaded") 
 
         # 3. Realiza o Login
         await page.fill('input[name="login"]', USUARIO) 
         await page.fill('input[name="password"]', SENHA)
         
-        # Tolerância de 60s para o clique
+        # Clica e aguarda a estabilização da rede pós-login
         await page.click('button:has-text("ENTRAR")', timeout=60000) 
+        await page.wait_for_load_state("networkidle", timeout=60000)
         
-        # 4. Espera Pós-Login
-        await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=15000)
+        # 4. Espera Pós-Login (Timeout de 30s para o painel carregar)
+        await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=30000)
         
         print(f"[{server_name}] ✅ Login realizado e página autenticada!")
         return context, page, browser 
@@ -134,6 +135,7 @@ class LoginManager:
                 print(f"[{server_name}] ⚠️ PHPSESSID não encontrado nos cookies.")
                 
             return session_dict
+
 
 
 
