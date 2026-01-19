@@ -3,6 +3,7 @@
 import asyncio
 import time
 import datetime  # Importado para a lógica de horário e dias
+import sys       # Necessário para o comando de restart (exit)
 from scripts.monitor import run_monitor
 from scripts.restart_campaign import restart_campaign
 from scripts.daily_mailing_worker import run_daily_import_pipeline
@@ -12,6 +13,9 @@ SERVERS_TO_MONITOR = ["MG", "SP"]
 
 # Intervalo de Checagem (30 segundos)
 CHECK_INTERVAL_SECONDS = 15  # Usando 15s para performance
+
+# Contador de falhas de login para auto-recuperação
+falhas_login_consecutivas = 0
 
 # --- CONSTANTES DE HORÁRIO DE EXPEDIENTE (AJUSTADO PARA UTC/RAILWAY) ---
 START_HOUR = 12   # 09:30h + 3h = 12:30h UTC
@@ -53,6 +57,7 @@ def is_within_operating_hours() -> bool:
 async def check_and_act(server: str):
     """
     Executa o monitoramento e acionamento (restart) para um servidor específico.
+    Retorna o status para controle de falhas globais.
     """
     # 1. Executa o Monitoramento (Passa o parâmetro 'server' para o worker)
     result = await run_monitor(server=server)
@@ -77,13 +82,16 @@ async def check_and_act(server: str):
         print(f"[{server}] Operação normal. Chamadas ativas: {active_calls}")
     else:
         print(f"[{server}] FALHA CRÍTICA no Monitoramento. Status: {status}")
+        
+    return status
 
 
 async def main_scheduler():
     """
     Loop principal que executa o monitoramento e a checagem da rotina diária.
     """
-    print("Iniciando Scheduler Principal (Modo Headless Railway)...")
+    global falhas_login_consecutivas
+    print("Iniciando Scheduler Principal (Modo Headless Railway com Auto-Recuperação)...")
 
     while True:
         now = datetime.datetime.now()
@@ -103,9 +111,22 @@ async def main_scheduler():
         if is_within_operating_hours():
             print(f"\n--- [ATIVO] Ciclo de Monitoramento Iniciado ({now.strftime('%H:%M:%S')}) ---")
 
-            # Executa as checagens de forma sequencial para MG e SP
-            await check_and_act(server="MG")
-            await check_and_act(server="SP")
+            # Executa as checagens de forma sequencial para MG e SP e captura os status
+            status_mg = await check_and_act(server="MG")
+            status_sp = await check_and_act(server="SP")
+
+            # Lógica de Auto-Recuperação: Se ambos falharem o login simultaneamente
+            if status_mg == "Login Falhou" and status_sp == "Login Falhou":
+                falhas_login_consecutivas += 1
+                print(f"⚠️ Instabilidade detectada: {falhas_login_consecutivas}/2 falhas consecutivas de login.")
+            else:
+                # Reseta o contador se ao menos um servidor estiver operando/logando
+                falhas_login_consecutivas = 0
+
+            # Disparo do Restart se atingir o limite de 2 falhas
+            if falhas_login_consecutivas >= 2:
+                print("🚨 [CRITICAL] 2 falhas de login seguidas detectadas. Forçando RESTART via sys.exit...")
+                sys.exit(1) # O Railway detecta o erro e reinicia o container automaticamente
 
         else:
             # A checagem de horário é FALSE, apenas loga o status inativo
@@ -121,6 +142,7 @@ if __name__ == '__main__':
         asyncio.run(main_scheduler())
     except KeyboardInterrupt:
         print("Scheduler encerrado.")
+
 
 
 
