@@ -66,7 +66,9 @@ async def finalize_campaign_only(server: str):
             await page.wait_for_timeout(200)
             await page.get_by_role("link", name="DA Preditivo").click()
             await page.wait_for_timeout(1000)
-            await page.get_by_text("Enviar").click()
+            
+            # Ajuste de clique forçado para evitar interceptação de menus
+            await page.get_by_text("Enviar").click(force=True)
 
             # Extração (Necessário para a próxima etapa, mas não para a finalização em si)
             current_campaign = await get_current_campaign_name(page)
@@ -114,12 +116,17 @@ async def restart_campaign(server: str):
             # Estabilização pós-login
             await page.wait_for_timeout(5000) 
 
-            # Navegação (Clique Discador Automático -> Preditivo -> Enviar)
+            # Navegação Robusta (Clique Discador Automático -> Preditivo -> Enviar)
             await page.get_by_role("link", name="send Discador Automático").click()
-            await page.wait_for_timeout(200) 
-            await page.get_by_role("link", name="DA Preditivo").click()
+            await page.wait_for_timeout(500) 
+            
+            # Uso de force=True para evitar interceptação de menus dropdown
+            await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await page.wait_for_timeout(1000)
-            await page.get_by_text("Enviar").click()
+            
+            enviar_btn = page.get_by_text("Enviar")
+            await enviar_btn.wait_for(state='visible', timeout=15000)
+            await enviar_btn.click(force=True)
 
             current_campaign = await get_current_campaign_name(page)
 
@@ -193,6 +200,7 @@ if __name__ == '__main__':
     asyncio.run(restart_campaign(server="MG"))
     # Loga, extrai nome da campanha em execução, finaliza campanha,
     # reconfigura os 3 dropdowns (Campanha, Telefone, Fila) e envia o mailing.
+
 
 
 
