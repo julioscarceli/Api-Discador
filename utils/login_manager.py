@@ -49,47 +49,43 @@ def get_server_name(server: str) -> str:
     return server.upper()
 
 
-async def create_context_and_login(playwright_instance, server: str) -> tuple[BrowserContext, Page, Browser] | tuple[None, None, None]:
-    """
-    Cria o contexto do navegador, realiza o login e retorna (context, page, browser).
-    Aplica tolerância aumentada para lidar com lentidão do servidor.
-    """
+# utils/login_manager.py (Trecho Otimizado)
+
+async def create_context_and_login(playwright_instance, server: str):
     login_url = get_login_url(server) 
     server_name = get_server_name(server)
     browser = None 
 
-    if not USUARIO or not SENHA:
-        print(f"[{server_name}] ❌ Credenciais não configuradas. Configure DISCADOR_USER/PASS no .env ou Railway Secrets.")
-        return None, None, None
-
     try:
-        # 1. Cria o Navegador (Usando HEADLESS_MODE)
         browser = await playwright_instance.chromium.launch(headless=HEADLESS_MODE)
         context = await browser.new_context(ignore_https_errors=True) 
         page = await context.new_page()
 
-        # 2. Navega para a URL de Login
-        # Tolerância aumentada para 90s para suportar rede instável
-        print(f"[{server_name}] Navegando para: {login_url}")
-        await page.goto(login_url, timeout=90000, wait_until="domcontentloaded") 
+        # BLOQUEIO DE RECURSOS: Impede o carregamento de imagens e CSS pesado para ganhar velocidade
+        await page.route("**/*.{png,jpg,jpeg,css}", lambda route: route.abort())
 
-        # 3. Realiza o Login
+        # Reduzimos a exigência de espera: "commit" já é suficiente para começar a preencher
+        print(f"[{server_name}] Acessando: {login_url}")
+        await page.goto(login_url, timeout=90000, wait_until="commit") 
+
+        # Pequena pausa para garantir que os inputs foram renderizados
+        await page.wait_for_selector('input[name="login"]', timeout=10000)
+
         await page.fill('input[name="login"]', USUARIO) 
         await page.fill('input[name="password"]', SENHA)
         
-        # Clica e aguarda a estabilização da rede pós-login
+        # Clica e aguarda apenas o necessário
         await page.click('button:has-text("ENTRAR")', timeout=60000) 
-        await page.wait_for_load_state("networkidle", timeout=60000)
         
-        # 4. Espera Pós-Login (Timeout de 30s para o painel carregar)
-        await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=30000)
+        # Espera o seletor principal (aumentamos a tolerância aqui)
+        await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=45000)
         
-        print(f"[{server_name}] ✅ Login realizado e página autenticada!")
+        print(f"[{server_name}] ✅ Login realizado!")
         return context, page, browser 
 
     except Exception as e:
-        print(f"[{server_name}] ❌ Erro durante o processo de login ou inicialização: {e}")
-        if 'browser' in locals() and browser:
+        print(f"[{server_name}] ❌ Falha técnica: {e}")
+        if browser:
             await browser.close()
         return None, None, None
 
@@ -135,6 +131,7 @@ class LoginManager:
                 print(f"[{server_name}] ⚠️ PHPSESSID não encontrado nos cookies.")
                 
             return session_dict
+
 
 
 
