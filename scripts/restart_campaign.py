@@ -20,6 +20,9 @@ SELETOR_BOTAO_TELEFONE_ABRIR = 'xpath=//*[@id="Discador"]/div[1]/div/div/div/div
 # NOVO SELETOR HIERÁRQUICO
 SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
 
+# MELHORIA: Seletor unificado para o botão vermelho em MG e SP
+SELETOR_FINALIZAR_ROBUSTO = 'button:has-text(/Finalizar Campanha/i), button.btParar, text=FINALIZAR CAMPANHA'
+
 
 async def get_current_campaign_name(page) -> str | None:
     """
@@ -34,7 +37,7 @@ async def get_current_campaign_name(page) -> str | None:
 
         for text in all_texts:
             clean_text = text.strip()
-            if "MAILING_DISCADOR" in clean_text.upper():
+            if clean_text.upper().startswith("MAILING_DISCADOR"):
                 # Limpeza para garantir apenas o nome puro (sem duplicatas ou % do print)
                 return clean_text.split('\n')[0].split('  ')[0].strip()
         return None
@@ -65,23 +68,31 @@ async def finalize_campaign_only(server: str):
 
             # Navegação (Clique Discador Automático -> Preditivo -> Enviar)
             await page.get_by_role("link", name="send Discador Automático").click()
-            await page.wait_for_timeout(500)
-            await page.get_by_role("link", name="DA Preditivo").click(force=True)
+            await page.wait_for_timeout(200)
+            await page.get_by_role("link", name="DA Preditivo").click()
             await page.wait_for_timeout(1000)
+            
+            # Ajuste de clique forçado para evitar interceptação de menus
             await page.get_by_text("Enviar").click(force=True)
+
+            # Extração (Necessário para a próxima etapa, mas não para a finalização em si)
+            current_campaign = await get_current_campaign_name(page)
+
+            if not current_campaign:
+                print(
+                    f"[{server_name}] ⚠️ Alerta: Nome da campanha não encontrado para log. Prosseguindo com a finalização.")
 
             print(f"[{server_name}] 2. Finalizando Campanha atual via UI...")
 
-            # --- O CLIQUE QUE FUNCIONAVA (RESTAURADO) ---
-            # Localiza o botão pelo texto exato que você forneceu: "Finalizar Campanha"
-            botao_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao_finalizar.wait_for(state='visible', timeout=20000)
+            # --- MELHORIA DE CLIQUE ROBUSTO ---
+            botao_finalizar = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
+            await botao_finalizar.wait_for(state='visible', timeout=30000)
             await botao_finalizar.scroll_into_view_if_needed()
             await botao_finalizar.click(force=True)
             
             await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
             await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True)
-            # --------------------------------------------
+            # ----------------------------------
 
             print(f"[{server_name}] ✅ Campanha antiga finalizada com sucesso.")
             await page.wait_for_timeout(2000)
@@ -110,7 +121,7 @@ async def restart_campaign(server: str):
             # ----------------------------------------------------
             # ETAPA 1: NAVEGAÇÃO, EXTRAÇÃO E FINALIZAÇÃO
             # ----------------------------------------------------
-            print(f"[{server_name}] 1. Navegando para Envio de Campanhas...")
+            print(f"[{server_name}] 1. Navegando para Envio de Campanhas e extraindo nome da campanha...")
 
             # Estabilização pós-login
             await page.wait_for_timeout(5000) 
@@ -118,6 +129,8 @@ async def restart_campaign(server: str):
             # Navegação Robusta (Clique Discador Automático -> Preditivo -> Enviar)
             await page.get_by_role("link", name="send Discador Automático").click()
             await page.wait_for_timeout(500) 
+            
+            # Uso de force=True para evitar interceptação de menus dropdown
             await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await page.wait_for_timeout(1000)
             
@@ -135,15 +148,15 @@ async def restart_campaign(server: str):
 
             print(f"[{server_name}] 2. Finalizando Campanha atual...")
             
-            # --- O CLIQUE QUE FUNCIONAVA (RESTAURADO) ---
-            botao_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao_finalizar.wait_for(state='visible', timeout=20000)
+            # --- MELHORIA DE CLIQUE ROBUSTO ---
+            botao_finalizar = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
+            await botao_finalizar.wait_for(state='visible', timeout=30000)
             await botao_finalizar.scroll_into_view_if_needed()
             await botao_finalizar.click(force=True)
             
             await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
             await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True) 
-            # --------------------------------------------
+            # ----------------------------------
             
             await page.wait_for_timeout(3000) 
 
@@ -154,20 +167,25 @@ async def restart_campaign(server: str):
 
             # AÇÃO A: Selecionar a CAMPANHA
             await page.get_by_role("button", name="Escolha a opção").first.click()
+            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000) 
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
+                timeout=20000) 
 
             # AÇÃO B: SELECIONAR TELEFONE/MAILING
             await page.click(SELETOR_BOTAO_TELEFONE_ABRIR)
+            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000)
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
+                timeout=20000) 
 
             # AÇÃO C: Selecionar a FILA DE ATENDIMENTO
             await page.click(SELETOR_BOTAO_FILA_ABRIR)
+            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=fila_name).wait_for(state='visible', timeout=10000)
