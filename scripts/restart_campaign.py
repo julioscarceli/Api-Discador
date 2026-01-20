@@ -20,9 +20,6 @@ SELETOR_BOTAO_TELEFONE_ABRIR = 'xpath=//*[@id="Discador"]/div[1]/div/div/div/div
 SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
 
 
-# scripts/restart_campaign.py (Ajuste de Precisão no Nome)
-
-
 async def get_current_campaign_name(page) -> str | None:
     """
     Captura o nome da campanha com maior tolerância e verificação de carga.
@@ -33,14 +30,12 @@ async def get_current_campaign_name(page) -> str | None:
         await page.wait_for_load_state("networkidle", timeout=30000)
         
         # 2. Tenta localizar o seletor com um timeout maior (30s)
-        # Se o 'Contatos pendentes' não aparecer, tentamos buscar pelo texto 'Campanha em execução'
         try:
             await page.wait_for_selector('text=Contatos pendentes', state='visible', timeout=30000)
         except:
             print("[DEBUG] Aviso: 'Contatos pendentes' não apareceu, tentando busca direta por MAILING...")
 
         # 3. Busca flexível por qualquer elemento que contenha MAILING_DISCADOR
-        # Usamos um seletor que ignore maiúsculas/minúsculas
         campaign_elements = page.locator('text=/MAILING_DISCADOR/i')
         
         # Espera pelo menos um elemento de mailing estar visível
@@ -52,8 +47,7 @@ async def get_current_campaign_name(page) -> str | None:
         if not all_texts:
             return None
 
-        # 4. Limpeza rigorosa (Baseada no seu print: texto duplicado e quebras de linha)
-        # Pegamos o primeiro, dividimos por linha e limpamos espaços
+        # 4. Limpeza rigorosa (Baseada no print: texto duplicado e quebras de linha)
         raw_text = all_texts[0].strip()
         clean_name = raw_text.split('\n')[0].split('  ')[0].strip()
         
@@ -103,18 +97,29 @@ async def finalize_campaign_only(server: str):
             current_campaign = await get_current_campaign_name(page)
 
             if not current_campaign:
-                print(
-                    f"[{server_name}] ⚠️ Alerta: Nome da campanha não encontrado para log. Prosseguindo com a finalização.")
+                print(f"[{server_name}] ⚠️ Alerta: Nome da campanha não encontrado para log. Prosseguindo.")
 
-            print(f"[{server_name}] 2. Finalizando Campanha atual via UI...")
+            # ----------------------------------------------------
+            # ETAPA 2: FINALIZAÇÃO OBRIGATÓRIA DA CAMPANHA
+            # ----------------------------------------------------
+            print(f"[{server_name}] 2. Finalizando Campanha atual via UI (Obrigatório)...")
 
-            # Finalização (O ponto final da rotina de limpeza)
-            await page.wait_for_selector(SELETOR_BOTAO_FINALIZAR, state='visible', timeout=10000)
-            await page.click(SELETOR_BOTAO_FINALIZAR)
-            await page.click(SELETOR_CONFIRMAR_FINALIZAR)
-            await page.wait_for_timeout(1000)
+            # Seletor robusto baseado no print (Case Insensitive e múltiplo)
+            seletor_finalizar = 'text=FINALIZAR CAMPANHA'
+            
+            botao = page.locator(seletor_finalizar).first
+            await botao.wait_for(state='visible', timeout=30000) #
+            
+            # Rola até o botão para garantir visibilidade
+            await botao.scroll_into_view_if_needed()
+            await botao.click(force=True) #
+
+            # Confirmação (Sim, pode finalizar!)
+            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=15000)
+            await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True)
 
             print(f"[{server_name}] ✅ Campanha antiga finalizada com sucesso.")
+            await page.wait_for_timeout(3000)
             return True
 
         except Exception as e:
@@ -165,13 +170,24 @@ async def restart_campaign(server: str):
 
             print(f"[{server_name}] ✅ Campanha atual identificada: {current_campaign}")
 
-            print(f"[{server_name}] 2. Finalizando Campanha atual...")
-            await page.wait_for_selector(SELETOR_BOTAO_FINALIZAR, state='visible', timeout=10000)
-            await page.click(SELETOR_BOTAO_FINALIZAR)
+            # ----------------------------------------------------
+            # ETAPA 2: FINALIZAÇÃO OBRIGATÓRIA DA CAMPANHA
+            # ----------------------------------------------------
+            print(f"[{server_name}] 2. Finalizando Campanha atual (Obrigatório)...")
             
-            # ✅ CORREÇÃO: Usando a constante correta
-            await page.click(SELETOR_CONFIRMAR_FINALIZAR) 
-            await page.wait_for_timeout(1000) 
+            seletor_finalizar = 'text=FINALIZAR CAMPANHA'
+            botao = page.locator(seletor_finalizar).first
+            await botao.wait_for(state='visible', timeout=30000)
+            
+            # Garante que o botão esteja visível na tela antes de clicar
+            await botao.scroll_into_view_if_needed()
+            await botao.click(force=True)
+            
+            # Confirmação
+            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=15000)
+            await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True) 
+            
+            await page.wait_for_timeout(3000) 
 
             # ----------------------------------------------------
             # ETAPA 3: RECONFIGURAÇÃO E DISPARO (AÇÕES OTIMIZADAS/ROBUSTAS)
@@ -180,25 +196,20 @@ async def restart_campaign(server: str):
 
             # AÇÃO A: Selecionar a CAMPANHA
             await page.get_by_role("button", name="Escolha a opção").first.click()
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000) 
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
-                timeout=20000) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
 
             # AÇÃO B: SELECIONAR TELEFONE/MAILING
             await page.click(SELETOR_BOTAO_TELEFONE_ABRIR)
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000)
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
-                timeout=20000) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
 
             # AÇÃO C: Selecionar a FILA DE ATENDIMENTO
             await page.click(SELETOR_BOTAO_FILA_ABRIR)
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
             await page.wait_for_timeout(500) 
             
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=fila_name).wait_for(state='visible', timeout=10000)
@@ -227,8 +238,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     import asyncio
     asyncio.run(restart_campaign(server="MG"))
-    # Loga, extrai nome da campanha em execução, finaliza campanha,
-    # reconfigura os 3 dropdowns (Campanha, Telefone, Fila) e envia o mailing.
+
 
 
 
