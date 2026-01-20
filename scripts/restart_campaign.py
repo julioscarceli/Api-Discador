@@ -7,8 +7,7 @@ from utils.login_manager import create_context_and_login, get_fila_name, get_ser
 from config.settings import SAIDAS_VALOR
 
 # --- Constantes do Script (Seletores Validados) ---
-SELETOR_BOTAO_FINALIZAR = 'button:has-text("Finalizar Campanha")'
-SELETOR_CONFIRMAR_FINALIZAR = 'button:has-text("Sim, pode finalizar!")' # CORRIGIDO
+SELETOR_CONFIRMAR_FINALIZAR = 'button:has-text("Sim, pode finalizar!")' 
 SELETOR_INPUT_SAIDAS = '#saida'
 SELETOR_BOTAO_SUBIR_MAILING = '#btCampanha1'
 SELETOR_PAINEL_PENDENTES = 'text=Contatos pendentes'
@@ -19,9 +18,6 @@ SELETOR_BOTAO_TELEFONE_ABRIR = 'xpath=//*[@id="Discador"]/div[1]/div/div/div/div
 
 # NOVO SELETOR HIERÁRQUICO
 SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
-
-# MELHORIA: Seletor unificado para o botão vermelho em MG e SP
-SELETOR_FINALIZAR_ROBUSTO = 'button:has-text(/Finalizar Campanha/i), button.btParar, text=FINALIZAR CAMPANHA'
 
 
 async def get_current_campaign_name(page) -> str | None:
@@ -101,7 +97,13 @@ async def finalize_campaign_only(server: str):
             # ----------------------------------------------------
             print(f"[{server_name}] 2. Executando clique de finalização robusto...")
             
-            botao = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
+            # CORREÇÃO DO SELETOR: Usando localizadores de texto do Playwright para evitar erro de parse CSS
+            botao = page.get_by_role("button").get_by_text(re.compile(r"Finalizar Campanha", re.IGNORECASE)).first
+            
+            # Tenta seletor alternativo via classe se o texto falhar
+            if await botao.count() == 0:
+                botao = page.locator("button.btParar").first
+
             await botao.wait_for(state='visible', timeout=30000)
             
             # Rola até o botão para garantir visibilidade
@@ -169,7 +171,13 @@ async def restart_campaign(server: str):
             # ----------------------------------------------------
             print(f"[{server_name}] 2. Finalizando Campanha ativa para reimportar...")
             
-            botao = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
+            # CORREÇÃO DO SELETOR: Usando localizadores de texto do Playwright para evitar erro de parse CSS
+            botao = page.get_by_role("button").get_by_text(re.compile(r"Finalizar Campanha", re.IGNORECASE)).first
+            
+            # Tenta seletor alternativo via classe se o texto falhar
+            if await botao.count() == 0:
+                botao = page.locator("button.btParar").first
+
             await botao.wait_for(state='visible', timeout=30000)
             
             # Garante que o botão esteja visível na tela antes de clicar
