@@ -6,9 +6,11 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login, get_fila_name, get_server_name
 from config.settings import SAIDAS_VALOR
 
-# --- Constantes do Script (Seletores Validados) ---
-SELETOR_BOTAO_FINALIZAR = 'button:has-text("Finalizar Campanha")'
-SELETOR_CONFIRMAR_FINALIZAR = 'button:has-text("Sim, pode finalizar!")' # CORRIGIDO
+# --- Constantes do Script (Seletores Validados via HTML enviado) ---
+SELETOR_TABELA_CONTAINER = '#Tabela'
+# Seleciona o botão pela classe técnica e texto exato
+SELETOR_BOTAO_FINALIZAR = 'button.btParar:has-text("Finalizar Campanha")'
+SELETOR_CONFIRMAR_FINALIZAR = 'button:has-text("Sim, pode finalizar!")'
 SELETOR_INPUT_SAIDAS = '#saida'
 SELETOR_BOTAO_SUBIR_MAILING = '#btCampanha1'
 SELETOR_PAINEL_PENDENTES = 'text=Contatos pendentes'
@@ -20,200 +22,142 @@ SELETOR_BOTAO_TELEFONE_ABRIR = 'xpath=//*[@id="Discador"]/div[1]/div/div/div/div
 # NOVO SELETOR HIERÁRQUICO
 SELETOR_LISTA_ABERTA_ITEM = 'div.dropdown-menu.open'
 
-# MELHORIA: Seletor unificado para o botão vermelho em MG e SP
-SELETOR_FINALIZAR_ROBUSTO = 'button:has-text(/Finalizar Campanha/i), button.btParar, text=FINALIZAR CAMPANHA'
-
 
 async def get_current_campaign_name(page) -> str | None:
     """
-    Função para extrair o nome da campanha atualmente em execução, com tolerância de 20s.
+    Captura o nome da campanha extraindo diretamente da lista do footer do card.
     """
     try:
-        # AUMENTO DE TIMEOUT: 20s para o painel de pendentes aparecer (Máxima tolerância)
-        await page.wait_for_selector(SELETOR_PAINEL_PENDENTES, state='visible', timeout=20000) 
+        # 1. Aguarda a tabela principal ser preenchida pelo JS do discador
+        print("[DEBUG] Aguardando renderização da tabela de campanhas...")
+        await page.wait_for_selector(SELETOR_TABELA_CONTAINER, state='visible', timeout=30000)
         
-        campaign_elements = page.locator('text=/MAILING_/')
-        all_texts = await campaign_elements.all_inner_texts()
+        # 2. Localiza o texto após o ícone 'assignment' (que é o título da Campanha no seu HTML)
+        # O seletor busca o texto que contém MAILING_DISCADOR dentro do card
+        campaign_element = page.locator('.card-footer .stats').filter(has_text="MAILING_DISCADOR")
+        
+        await campaign_element.first.wait_for(state='visible', timeout=15000)
+        
+        raw_text = await campaign_element.first.inner_text()
+        print(f"[DEBUG] Texto bruto do footer: {raw_text}")
 
-        for text in all_texts:
-            clean_text = text.strip()
-            if clean_text.upper().startswith("MAILING_DISCADOR"):
-                # Limpeza para garantir apenas o nome puro (sem duplicatas ou % do print)
-                return clean_text.split('\n')[0].split('  ')[0].strip()
+        # 3. Limpeza rigorosa: pega apenas a linha que contém o nome da campanha
+        for line in raw_text.split('\n'):
+            if "MAILING_DISCADOR" in line.upper():
+                # Remove o prefixo do ícone se houver e limpa espaços/porcentagens
+                clean_name = line.replace('assignment:', '').replace('assignment', '').strip()
+                clean_name = clean_name.split('  ')[0].strip()
+                clean_name = re.sub(r'\d+\.?\d*%', '', clean_name).strip()
+                
+                print(f"[DEBUG] Nome identificado: '{clean_name}'")
+                return clean_name
+        
         return None
     except Exception as e:
+        print(f"[DEBUG] Erro ao extrair nome via footer: {e}")
         return None
 
 
-# --- FUNÇÃO ISOLADA PARA LIMPEZA (CHAMADA PELO DAILY WORKER) ---
+# --- FUNÇÃO ISOLADA PARA LIMPEZA (CHAMADA PELA API E DAILY WORKER) ---
 async def finalize_campaign_only(server: str):
     """Navega até a página de envio e executa apenas a finalização da campanha atual."""
     async with async_playwright() as p:
-        # 1. Recebe os 3 objetos (context, page, browser)
         context, page, browser = await create_context_and_login(p, server=server)
-
-        if not context:
-            return False
-
+        if not context: return False
         server_name = get_server_name(server)
 
         try:
-            # ----------------------------------------------------
-            # ETAPA 1: NAVEGAÇÃO E EXTRAÇÃO DO NOME DA CAMPANHA
-            # ----------------------------------------------------
-            print(f"[{server_name}] 1. Navegando para Finalização de Campanha...")
-
-            # Estabilização pós-login
+            print(f"[{server_name}] 1. Navegando para Finalização via API...")
             await page.wait_for_timeout(5000)
-
-            # Navegação (Clique Discador Automático -> Preditivo -> Enviar)
             await page.get_by_role("link", name="send Discador Automático").click()
-            await page.wait_for_timeout(200)
-            await page.get_by_role("link", name="DA Preditivo").click()
+            await page.wait_for_timeout(500)
+            await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await page.wait_for_timeout(1000)
-            
-            # Ajuste de clique forçado para evitar interceptação de menus
             await page.get_by_text("Enviar").click(force=True)
 
-            # Extração (Necessário para a próxima etapa, mas não para a finalização em si)
-            current_campaign = await get_current_campaign_name(page)
+            # Espera a tabela carregar antes de procurar o botão
+            await page.wait_for_selector(SELETOR_TABELA_CONTAINER, state='visible', timeout=20000)
 
-            if not current_campaign:
-                print(
-                    f"[{server_name}] ⚠️ Alerta: Nome da campanha não encontrado para log. Prosseguindo com a finalização.")
+            print(f"[{server_name}] 2. Finalizando Campanha via .btParar...")
+            botao = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            await botao.wait_for(state='visible', timeout=30000)
+            await botao.scroll_into_view_if_needed()
+            await botao.click(force=True)
 
-            print(f"[{server_name}] 2. Finalizando Campanha atual via UI...")
-
-            # --- MELHORIA DE CLIQUE ROBUSTO ---
-            botao_finalizar = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
-            await botao_finalizar.wait_for(state='visible', timeout=30000)
-            await botao_finalizar.scroll_into_view_if_needed()
-            await botao_finalizar.click(force=True)
-            
-            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
+            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=15000)
             await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True)
-            # ----------------------------------
 
-            print(f"[{server_name}] ✅ Campanha antiga finalizada com sucesso.")
-            await page.wait_for_timeout(2000)
+            print(f"[{server_name}] ✅ Finalização concluída.")
+            await page.wait_for_timeout(3000)
             return True
-
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro durante a FINALIZAÇÃO da campanha: {e}")
+            print(f"[{server_name}] ❌ Erro na finalização via API: {e}")
             return False
-
         finally:
-            if browser:  # ✅ GARANTIA DE RECURSOS: Fecha o navegador após cada ciclo.
-                await browser.close()
+            if browser: await browser.close()
 
 async def restart_campaign(server: str): 
     async with async_playwright() as p:
-        # 1. Recebe os 3 objetos (context, page, browser)
         context, page, browser = await create_context_and_login(p, server=server)
-
-        if not context:
-            return False
-
+        if not context: return False
         server_name = get_server_name(server)
         fila_name = get_fila_name(server)
 
         try:
-            # ----------------------------------------------------
-            # ETAPA 1: NAVEGAÇÃO, EXTRAÇÃO E FINALIZAÇÃO
-            # ----------------------------------------------------
-            print(f"[{server_name}] 1. Navegando para Envio de Campanhas e extraindo nome da campanha...")
-
-            # Estabilização pós-login
+            print(f"[{server_name}] 1. Iniciando Rotina de Restart...")
             await page.wait_for_timeout(5000) 
-
-            # Navegação Robusta (Clique Discador Automático -> Preditivo -> Enviar)
             await page.get_by_role("link", name="send Discador Automático").click()
             await page.wait_for_timeout(500) 
-            
-            # Uso de force=True para evitar interceptação de menus dropdown
             await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await page.wait_for_timeout(1000)
-            
-            enviar_btn = page.get_by_text("Enviar")
-            await enviar_btn.wait_for(state='visible', timeout=15000)
-            await enviar_btn.click(force=True)
+            await page.get_by_text("Enviar").click(force=True)
 
+            # Extração de nome aguardando a tabela
             current_campaign = await get_current_campaign_name(page)
+            if not current_campaign: return False
 
-            if not current_campaign:
-                print(f"[{server_name}] ⚠️ Alerta: Não foi possível obter o nome da campanha. Abortando restart.")
-                return False
+            print(f"[{server_name}] ✅ Campanha atual: {current_campaign}")
 
-            print(f"[{server_name}] ✅ Campanha atual identificada: {current_campaign}")
-
-            print(f"[{server_name}] 2. Finalizando Campanha atual...")
+            print(f"[{server_name}] 2. Finalizando Campanha ativa...")
+            botao = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            await botao.wait_for(state='visible', timeout=30000)
+            await botao.scroll_into_view_if_needed()
+            await botao.click(force=True)
             
-            # --- MELHORIA DE CLIQUE ROBUSTO ---
-            botao_finalizar = page.locator(SELETOR_FINALIZAR_ROBUSTO).first
-            await botao_finalizar.wait_for(state='visible', timeout=30000)
-            await botao_finalizar.scroll_into_view_if_needed()
-            await botao_finalizar.click(force=True)
-            
-            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
+            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=15000)
             await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True) 
-            # ----------------------------------
-            
             await page.wait_for_timeout(3000) 
 
-            # ----------------------------------------------------
-            # ETAPA 3: RECONFIGURAÇÃO E DISPARO (AÇÕES OTIMIZADAS/ROBUSTAS)
-            # ----------------------------------------------------
-            print(f"[{server_name}] 3. Reconfigurando e disparando o mailing...")
+            print(f"[{server_name}] 3. Reconfigurando Dropdowns...")
+            await page.get_by_role("button", name="Escolha a option").first.click()
+            await page.wait_for_timeout(800) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
 
-            # AÇÃO A: Selecionar a CAMPANHA
-            await page.get_by_role("button", name="Escolha a opção").first.click()
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
-            await page.wait_for_timeout(500) 
-            
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000) 
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
-                timeout=20000) 
-
-            # AÇÃO B: SELECIONAR TELEFONE/MAILING
             await page.click(SELETOR_BOTAO_TELEFONE_ABRIR)
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
-            await page.wait_for_timeout(500) 
-            
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).wait_for(state='visible', timeout=10000)
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(
-                timeout=20000) 
+            await page.wait_for_timeout(800) 
+            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=current_campaign).click(timeout=20000) 
 
-            # AÇÃO C: Selecionar a FILA DE ATENDIMENTO
             await page.click(SELETOR_BOTAO_FILA_ABRIR)
-            # ✅ CORREÇÃO: Restaurando espera de sincronia de 500ms
-            await page.wait_for_timeout(500) 
-            
-            await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=fila_name).wait_for(state='visible', timeout=10000)
+            await page.wait_for_timeout(800) 
             await page.locator(SELETOR_LISTA_ABERTA_ITEM).get_by_role("option", name=fila_name).click(timeout=20000)
 
-            # AÇÃO D: Preencher Saídas
             await page.fill(SELETOR_INPUT_SAIDAS, SAIDAS_VALOR)
-
-            # AÇÃO E: Clicar no BOTÃO DE ENVIO (Subir Mailing)
             await page.click(SELETOR_BOTAO_SUBIR_MAILING)
-            
             await page.wait_for_timeout(2000) 
 
-            print(f"[{server_name}] ✅ Campanhas reconfigurada e subida com sucesso!")
+            print(f"[{server_name}] ✅ Restart completo!")
             return True
-
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro durante a automação do restart: {e}")
+            print(f"[{server_name}] ❌ Erro no restart: {e}")
             return False
-
         finally:
-            if browser: # ✅ GARANTIA DE RECURSOS: Fecha o navegador após cada ciclo.
-                await browser.close()
+            if browser: await browser.close()
 
 
 if __name__ == '__main__':
     import asyncio
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
