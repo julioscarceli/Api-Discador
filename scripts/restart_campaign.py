@@ -104,15 +104,15 @@ async def finalize_campaign_only(server: str):
             # ----------------------------------------------------
             print(f"[{server_name}] 2. Finalizando Campanha atual via UI (Obrigatório)...")
 
-            # Seletor robusto baseado no print (Case Insensitive e múltiplo)
-            seletor_finalizar = 'text=FINALIZAR CAMPANHA'
+            # Seletor assertivo: Texto ignorando case E classe técnica do botão
+            seletor_finalizar = 'button:has-text(/Finalizar Campanha/i), button.btParar'
             
             botao = page.locator(seletor_finalizar).first
-            await botao.wait_for(state='visible', timeout=30000) #
+            await botao.wait_for(state='visible', timeout=30000) 
             
             # Rola até o botão para garantir visibilidade
             await botao.scroll_into_view_if_needed()
-            await botao.click(force=True) #
+            await botao.click(force=True)
 
             # Confirmação (Sim, pode finalizar!)
             await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=15000)
@@ -175,7 +175,9 @@ async def restart_campaign(server: str):
             # ----------------------------------------------------
             print(f"[{server_name}] 2. Finalizando Campanha atual (Obrigatório)...")
             
-            seletor_finalizar = 'text=FINALIZAR CAMPANHA'
+            # Seletor assertivo: Texto ignorando case E classe técnica do botão
+            seletor_finalizar = 'button:has-text(/Finalizar Campanha/i), button.btParar'
+            
             botao = page.locator(seletor_finalizar).first
             await botao.wait_for(state='visible', timeout=30000)
             
@@ -238,6 +240,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     import asyncio
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
