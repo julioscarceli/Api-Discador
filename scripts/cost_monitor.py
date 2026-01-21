@@ -3,7 +3,7 @@ import re
 import json
 import asyncio
 import httpx
-import redis  # Adicionado para persistência semanal
+import redis
 from typing import Dict, Any
 from datetime import datetime
 from dotenv import load_dotenv
@@ -71,7 +71,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.wait_for_timeout(2000) 
             await page.click("#relatorioAgrupadoLinhas", force=True)
             
-            # 3. Lógica de Consumo Diário
+            # 3. Extração de Consumo Hoje
             custo_diario = 0.0
             try:
                 await page.wait_for_selector("#tblMain", timeout=15000, state="visible")
@@ -79,24 +79,24 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
                 ura_text = await page.locator('#tblMain > tbody > tr:nth-child(2) > td:nth-child(7)').text_content(timeout=5000)
                 custo_diario = clean_to_float(discador_text) + clean_to_float(ura_text)
             except:
-                custo_diario = 0.0
+                print("[WORKER-DEBUG] ℹ️ Tabela de hoje vazia.")
 
-            # --- LÓGICA DE ACUMULADO SEMANAL VIA REDIS ---
+            # --- LÓGICA REDIS: ACUMULADO SEMANAL ---
             hoje_str = datetime.now().strftime('%Y-%m-%d')
-            # Salva o custo de hoje no Redis para compor a semana
+            # Salva o custo de hoje no Redis para compor o histórico
             r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200) # Expira em 8 dias
 
-            # Soma os últimos 7 dias que estiverem no Redis
+            # Soma os últimos 7 dias presentes no Redis
             total_semanal = 0.0
-            chaves_semana = r.keys("custo_hist_*")
-            for key in chaves_semana:
+            chaves_dias = r.keys("custo_hist_*")
+            for key in chaves_dias:
                 val = r.get(key)
                 total_semanal += float(val) if val else 0.0
 
             dados = {
                 "saldo_atual": clean_to_float(saldo_text),
                 "custo_diario_total": custo_diario,
-                "custo_semanal_acumulado": total_semanal  # Agora com valor real
+                "custo_semanal_acumulado": total_semanal 
             }
             return dados
             
@@ -112,9 +112,12 @@ async def enviar_para_api(dados: Dict[str, Any]):
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
-            print(f"✅ [WORKER-API] Entrega confirmada.")
+            if resp.status_code == 200:
+                print("✅ [WORKER-API] Entrega confirmada.")
+            else:
+                print(f"❌ [WORKER-API] Erro: {resp.status_code}")
         except Exception as e:
-            print(f"❌ [WORKER-API] Falha: {e}")
+            print(f"❌ [WORKER-API] Falha de conexão: {e}")
 
 if __name__ == '__main__':
     print(f"--- [WORKER START] {datetime.now().strftime('%d/%m %H:%M:%S')} ---")
@@ -123,6 +126,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} | Semanal: {fmt['custo_semanal']} ---")
+
 
 
 
