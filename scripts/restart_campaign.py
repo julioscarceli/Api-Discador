@@ -11,74 +11,70 @@ SELETOR_BOTAO_FINALIZAR = 'button.btParar'
 SELETOR_CONFIRMAR_FINALIZAR = 'button:has-text("Sim, pode finalizar!"), .swal2-confirm'
 SELETOR_INPUT_SAIDAS = '#saida'
 SELETOR_BOTAO_SUBIR_MAILING = '#btCampanha1'
-# Seletor do card que contém as informações que vimos no seu print
-SELETOR_STATS_CAMPANHA = '.card-stats .stats' 
+SELETOR_CARD_STATS = '.card-stats' 
 
 async def get_current_campaign_name(page) -> str | None:
     """
-    Extrai o nome da campanha com múltiplas tentativas de leitura.
+    Extrai o nome da campanha esperando a estabilização do AJAX.
     """
     try:
-        # Aguarda a rede ficar ociosa (AJAX concluído)
+        # Espera a rede parar de trafegar dados (carregamento AJAX concluído)
         await page.wait_for_load_state("networkidle", timeout=20000)
         
-        # Tenta localizar o bloco de estatísticas onde está o ícone 'assignment'
+        # Localiza o card de estatísticas
         locator = page.locator('.stats').filter(has_text="MAILING_DISCADOR")
-        
-        # Espera o texto aparecer com 30s de timeout
-        await locator.first.wait_for(state='visible', timeout=30000)
+        await locator.first.wait_for(state='visible', timeout=20000)
         
         text_content = await locator.first.inner_text()
         
-        # Regex para capturar o nome do mailing na primeira linha
+        # Busca o padrão MAILING_DISCADOR no texto capturado
         match = re.search(r'MAILING_DISCADOR[^\n\r]+', text_content)
         if match:
             clean_name = match.group(0).replace('assignment:', '').strip()
-            # Remove sufixos e espaços duplos
-            clean_name = clean_name.split('  ')[0].strip()
-            print(f"[DEBUG] Sucesso! Campanha: '{clean_name}'")
-            return clean_name
+            # Pega apenas a primeira parte antes de espaços duplos ou quebras
+            return clean_name.split('  ')[0].strip()
         
         return None
     except Exception as e:
-        print(f"[DEBUG] Erro na leitura dos dados: {e}")
+        print(f"[DEBUG] Erro ao extrair nome: {e}")
         return None
 
 async def finalize_campaign_only(server: str):
+    """Executa apenas a finalização (Limpeza UI via API)."""
     async with async_playwright() as p:
         context, page, browser = await create_context_and_login(p, server=server)
         if not context: return False
         server_name = get_server_name(server)
 
         try:
-            print(f"[{server_name}] 1. Navegando para Envio (Via API)...")
+            print(f"[{server_name}] 1. Navegando para Envio (API)...")
             await page.wait_for_timeout(3000)
-            
-            # Navegação passo a passo com esperas curtas
-            await page.click('text=Discador Automático')
-            await page.click('text=DA Preditivo')
+            await page.get_by_role("link", name="send Discador Automático").click()
+            await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await asyncio.sleep(1)
-            await page.click('text=Enviar', force=True)
+            await page.get_by_text("Enviar").click(force=True)
 
-            # Espera o botão de finalizar aparecer (prova que a tabela carregou)
-            await page.wait_for_selector(SELETOR_BOTAO_FINALIZAR, state='visible', timeout=30000)
-
-            print(f"[{server_name}] 2. Clicando em Finalizar...")
+            print(f"[{server_name}] 2. Finalizando Campanha (Clique via Script)...")
+            # Espera o botão estar no HTML e clica via evaluate para ignorar bloqueios visuais
             botao = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao.scroll_into_view_if_needed()
-            await botao.click(force=True)
+            await botao.wait_for(state='attached', timeout=30000)
+            await botao.evaluate("node => node.click()")
 
-            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
-            await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True)
+            # Confirmação
+            confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
+            await confirmar.wait_for(state='attached', timeout=10000)
+            await confirmar.evaluate("node => node.click()")
             
+            print(f"[{server_name}] ✅ Finalização concluída via API.")
             return True
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro na finalização API: {e}")
+            print(f"[{server_name}] ❌ Falha na finalização: {e}")
             return False
         finally:
             if browser: await browser.close()
 
 async def restart_campaign(server: str): 
+    """Executa o ciclo completo de Restart (Monitor)."""
     async with async_playwright() as p:
         context, page, browser = await create_context_and_login(p, server=server)
         if not context: return False
@@ -87,33 +83,31 @@ async def restart_campaign(server: str):
         fila_name = get_fila_name(server)
 
         try:
-            print(f"[{server_name}] 1. Navegando para Envio...")
+            print(f"[{server_name}] 1. Navegando e extraindo dados...")
             await page.wait_for_timeout(3000) 
-            await page.click('text=Discador Automático')
-            await page.click('text=DA Preditivo')
+            await page.get_by_role("link", name="send Discador Automático").click()
+            await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await asyncio.sleep(1)
-            await page.click('text=Enviar', force=True)
+            await page.get_by_text("Enviar").click(force=True)
 
-            # Extração do nome (que agora espera o AJAX)
             current_campaign = await get_current_campaign_name(page)
-
             if not current_campaign:
-                print(f"[{server_name}] ⚠️ Alerta: Campanha não carregou. Tentando recarregar página...")
+                print(f"[{server_name}] ⚠️ Alerta: Campanha não carregou. Tentando F5...")
                 await page.reload()
-                await page.wait_for_timeout(5000)
                 current_campaign = await get_current_campaign_name(page)
                 if not current_campaign: return False
 
-            print(f"[{server_name}] ✅ Campanha: {current_campaign}")
-
-            print(f"[{server_name}] 2. Finalizando...")
-            botao = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao.wait_for(state='visible', timeout=20000)
-            await botao.scroll_into_view_if_needed()
-            await botao.click(force=True)
+            print(f"[{server_name}] ✅ Campanha: {current_campaign}. Finalizando...")
             
-            await page.wait_for_selector(SELETOR_CONFIRMAR_FINALIZAR, state='visible', timeout=10000)
-            await page.click(SELETOR_CONFIRMAR_FINALIZAR, force=True) 
+            # Clique de finalização robusto
+            botao = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            await botao.wait_for(state='attached', timeout=20000)
+            await botao.evaluate("node => node.click()")
+            
+            confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
+            await confirmar.wait_for(state='attached', timeout=10000)
+            await confirmar.evaluate("node => node.click()")
+            
             await page.wait_for_timeout(3000) 
 
             print(f"[{server_name}] 3. Reconfigurando Dropdowns...")
@@ -122,7 +116,7 @@ async def restart_campaign(server: str):
             await page.wait_for_timeout(800) 
             await page.locator('div.dropdown-menu.open').get_by_role("option", name=current_campaign).click() 
 
-            # Dropdown Telefone (Usando o seletor ID que vimos no seu HTML)
+            # Dropdown Telefone (Usando data-id do seu HTML)
             await page.click('button[data-id="telefones"]')
             await page.wait_for_timeout(800) 
             await page.locator('div.dropdown-menu.open').get_by_role("option", name=current_campaign).click() 
@@ -134,8 +128,7 @@ async def restart_campaign(server: str):
 
             await page.fill(SELETOR_INPUT_SAIDAS, SAIDAS_VALOR)
             await page.click(SELETOR_BOTAO_SUBIR_MAILING)
-            await page.wait_for_timeout(2000) 
-
+            
             print(f"[{server_name}] ✅ Restart OK!")
             return True
         except Exception as e:
@@ -145,7 +138,9 @@ async def restart_campaign(server: str):
             if browser: await browser.close()
 
 if __name__ == '__main__':
+    # Teste rápido manual
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
