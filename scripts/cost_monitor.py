@@ -3,6 +3,7 @@ import re
 import json
 import asyncio
 import httpx
+import redis  # Adicionado para persistência semanal
 from typing import Dict, Any
 from datetime import datetime
 from dotenv import load_dotenv
@@ -14,8 +15,11 @@ load_dotenv()
 BASE_URL = os.getenv("NEXT_ROUTER_URL")
 USUARIO = os.getenv("NEXT_ROUTER_USER")
 SENHA = os.getenv("NEXT_ROUTER_PASS")
-# URL da sua API Gateway no Railway
 API_URL_INTERNA = "https://api-discador-production.up.railway.app/api/atualizar-custos"
+
+# Configuração do Redis (Baseado no seu print do Railway)
+REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
+r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def clean_to_float(value):
     if value == "—" or value is None: return 0.0
@@ -55,7 +59,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.fill("#password", SENHA)
             await page.click('button:has-text("Conectar")')
             
-            # 1. Extração do Saldo (Sempre visível após login)
+            # 1. Extração do Saldo
             saldo_el = "#system-container > div > div:nth-child(2) > div > h3"
             await page.wait_for_selector(saldo_el, timeout=45000)
             saldo_text = await page.text_content(saldo_el)
@@ -67,69 +71,59 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.wait_for_timeout(2000) 
             await page.click("#relatorioAgrupadoLinhas", force=True)
             
-            # --- LÓGICA DE VERIFICAÇÃO DE CONSUMO ---
-            print("[WORKER-DEBUG] ⏳ Verificando se há consumo registrado hoje...")
+            # 3. Lógica de Consumo Diário
             custo_diario = 0.0
             try:
-                # Tenta localizar a tabela por apenas 15 segundos
                 await page.wait_for_selector("#tblMain", timeout=15000, state="visible")
-                print("[WORKER-DEBUG] 📊 Tabela encontrada. Extraindo valores...")
-                
-                # Extração das linhas de Discador e URA
-                discador_text = "0"
-                try:
-                    discador_text = await page.locator('#tblMain > tbody > tr:nth-child(1) > td:nth-child(7)').text_content(timeout=5000)
-                except: pass
-
-                ura_text = "0"
-                try:
-                    ura_text = await page.locator('#tblMain > tbody > tr:nth-child(2) > td:nth-child(7)').text_content(timeout=5000)
-                except: pass
-                
+                discador_text = await page.locator('#tblMain > tbody > tr:nth-child(1) > td:nth-child(7)').text_content(timeout=5000)
+                ura_text = await page.locator('#tblMain > tbody > tr:nth-child(2) > td:nth-child(7)').text_content(timeout=5000)
                 custo_diario = clean_to_float(discador_text) + clean_to_float(ura_text)
-                
-            except Exception:
-                # Caso a tabela não apareça, o custo é zero (o roteador não gera a tabela sem dados)
-                print("[WORKER-DEBUG] ℹ️ Tabela não localizada. Assumindo custo zero para o dia.")
+            except:
                 custo_diario = 0.0
+
+            # --- LÓGICA DE ACUMULADO SEMANAL VIA REDIS ---
+            hoje_str = datetime.now().strftime('%Y-%m-%d')
+            # Salva o custo de hoje no Redis para compor a semana
+            r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200) # Expira em 8 dias
+
+            # Soma os últimos 7 dias que estiverem no Redis
+            total_semanal = 0.0
+            chaves_semana = r.keys("custo_hist_*")
+            for key in chaves_semana:
+                val = r.get(key)
+                total_semanal += float(val) if val else 0.0
 
             dados = {
                 "saldo_atual": clean_to_float(saldo_text),
                 "custo_diario_total": custo_diario,
-                "custo_semanal_acumulado": 0.0 
+                "custo_semanal_acumulado": total_semanal  # Agora com valor real
             }
             return dados
             
     except Exception as e:
-        print(f"[WORKER-ERROR] ❌ Erro Crítico durante a coleta: {str(e)}")
+        print(f"[WORKER-ERROR] ❌ Erro Crítico: {str(e)}")
         return {"erro": str(e)}
     finally:
         if browser: 
-            print("[WORKER-DEBUG] 🔒 Fechando navegador...")
             await browser.close()
 
 async def enviar_para_api(dados: Dict[str, Any]):
-    print(f"[WORKER-API] 📡 Enviando dados para Gateway (Diário: R$ {dados['custo_diario_total']})...")
+    print(f"[WORKER-API] 📡 Enviando dados para Gateway...")
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
-            if resp.status_code == 200:
-                print("✅ [WORKER-API] Entrega confirmada pela API Gateway.")
-            else:
-                print(f"❌ [WORKER-API] Erro na API: {resp.status_code}")
+            print(f"✅ [WORKER-API] Entrega confirmada.")
         except Exception as e:
-            print(f"❌ [WORKER-API] Falha de conexão: {e}")
+            print(f"❌ [WORKER-API] Falha: {e}")
 
 if __name__ == '__main__':
     print(f"--- [WORKER START] {datetime.now().strftime('%d/%m %H:%M:%S')} ---")
     dados_brutos = asyncio.run(coletar_custos_async())
-
     if not dados_brutos.get('erro'):
-        # Envia os resultados para a API
         asyncio.run(enviar_para_api(dados_brutos)) 
-        
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
-        print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+        print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} | Semanal: {fmt['custo_semanal']} ---")
+
 
 
 
