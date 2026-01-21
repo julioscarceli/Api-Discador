@@ -47,6 +47,44 @@ async def safe_click_enviar(page):
     print("[DEBUG] Disparando clique forçado na aba Enviar...")
     await enviar_element.dispatch_event("click")
 
+async def finalize_campaign_only(server: str):
+    """Navega até a página de envio e executa apenas a finalização da campanha atual."""
+    async with async_playwright() as p:
+        context, page, browser = await create_context_and_login(p, server=server)
+        if not context: return False
+        server_name = get_server_name(server)
+
+        try:
+            print(f"[{server_name}] 1. Navegando para Limpeza UI...")
+            await page.wait_for_timeout(5000)
+            
+            # Navegação via menu lateral
+            await page.get_by_role("link", name="send Discador Automático").click()
+            await page.get_by_role("link", name="DA Preditivo").click(force=True)
+            await asyncio.sleep(2)
+            
+            # Clique seguro na aba 'Enviar'
+            await safe_click_enviar(page)
+
+            print(f"[{server_name}] 2. Finalizando Campanha atual via UI...")
+            # Força a finalização via JS direto para ignorar obstruções
+            botao_parar = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            await botao_parar.wait_for(state='attached', timeout=30000)
+            await botao_parar.dispatch_event("click")
+            
+            confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
+            await confirmar.wait_for(state='attached', timeout=10000)
+            await confirmar.dispatch_event("click")
+            
+            print(f"[{server_name}] ✅ Campanha antiga finalizada com sucesso.")
+            await page.wait_for_timeout(2000)
+            return True
+        except Exception as e:
+            print(f"[{server_name}] ❌ Erro durante a FINALIZAÇÃO da campanha: {e}")
+            return False
+        finally:
+            if browser: await browser.close()
+
 async def restart_campaign(server: str): 
     async with async_playwright() as p:
         context, page, browser = await create_context_and_login(p, server=server)
@@ -120,6 +158,7 @@ async def restart_campaign(server: str):
 
 if __name__ == '__main__':
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
