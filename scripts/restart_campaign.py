@@ -129,35 +129,69 @@ async def restart_campaign(server: str):
             
             await page.wait_for_timeout(5000) 
 
-            # Configuração dos Dropdowns via data-id
+# ----------------------------------------------------
+            # ETAPA 3: RECONFIGURAÇÃO E DISPARO (AÇÕES ROBUSTAS)
+            # ----------------------------------------------------
             print(f"[{server_name}] 3. Reconfigurando discagem...")
+
+            # --- AÇÃO A: Selecionar a CAMPANHA (2ª Coluna) ---
+            # Localiza o botão pelo XPath específico da estrutura que você enviou
+            btn_campanha = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[2]/div/div/button')
+            await btn_campanha.wait_for(state='visible', timeout=10000)
+            await btn_campanha.click()
+            await page.wait_for_timeout(1000) 
+
+            # Clica na opção que contém o nome da campanha (MAILING_DISCADOR...)
+            # Usamos .first para evitar o erro de duplicidade (strict mode)
+            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=current_campaign).first.click()
+            print(f"[{server_name}] - Campanha '{current_campaign}' selecionada.")
+
+            # --- AÇÃO B: Selecionar o TELEFONE (3ª Coluna) ---
+            btn_telefone = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/button')
+            await btn_telefone.wait_for(state='visible', timeout=10000)
+            await btn_telefone.click()
+            await page.wait_for_timeout(1000)
+
+            # Seleciona a opção de telefone correspondente
+            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=current_campaign).first.click()
+            print(f"[{server_name}] - Telefone selecionado.")
+
+            # --- AÇÃO C: Selecionar a FILA DE ATENDIMENTO (6ª Coluna) ---
+            btn_fila = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[6]/div/div[1]/button')
+            await btn_fila.wait_for(state='visible', timeout=10000)
+            await btn_fila.click()
+            await page.wait_for_timeout(1000)
+
+            # Seleciona a fila conforme a região (DISCADOR_SP ou DISCADOR_MG)
+            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=fila_name).first.click()
+            print(f"[{server_name}] - Fila '{fila_name}' selecionada.")
+
+            # --- FINALIZAÇÃO: Saídas e Botão Subir ---
+            # Preenche o campo Saídas (#saida)
+            input_saidas = page.locator(SELETOR_INPUT_SAIDAS)
+            await input_saidas.wait_for(state='visible')
+            await input_saidas.fill(str(SAIDAS_VALOR))
+
+            # Clica no botão de aviãozinho para disparar (#btCampanha1)
+            btn_subir = page.locator(SELETOR_BOTAO_SUBIR_MAILING)
+            await btn_subir.wait_for(state='visible')
+            await btn_subir.click()
             
-            # Seleciona Campanha
-            await page.get_by_role("button", name="Escolha a opção").first.click()
-            await page.locator('div.dropdown-menu.open').get_by_role("option", name=current_campaign).click() 
-
-            # Seleciona Telefone
-            await page.click('button[data-id="telefones"]')
-            await page.locator('div.dropdown-menu.open').get_by_role("option", name=current_campaign).click() 
-
-            # Seleciona Fila
-            await page.click('button[data-id="fila"]')
-            await page.locator('div.dropdown-menu.open').get_by_role("option", name=fila_name).click()
-
-            # Disparo Final
-            await page.fill(SELETOR_INPUT_SAIDAS, SAIDAS_VALOR)
-            await page.click(SELETOR_BOTAO_SUBIR_MAILING)
-            
-            print(f"[{server_name}] ✅ RESTART EXECUTADO!")
+            await page.wait_for_timeout(3000)
+            print(f"[{server_name}] ✅ RESTART EXECUTADO COM SUCESSO!")
             return True
+
         except Exception as e:
             print(f"[{server_name}] ❌ Erro Crítico no Restart: {e}")
             return False
         finally:
-            if browser: await browser.close()
+            if browser: 
+                await browser.close()
 
 if __name__ == '__main__':
+    # Teste rápido manual
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
