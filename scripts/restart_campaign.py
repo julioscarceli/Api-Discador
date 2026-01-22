@@ -48,42 +48,56 @@ async def safe_click_enviar(page):
     await enviar_element.dispatch_event("click")
 
 async def finalize_campaign_only(server: str):
-    """Navega até a página de envio e executa apenas a finalização da campanha atual."""
+    """
+    Navega até a página de envio e executa apenas a finalização da campanha atual.
+    Espelha a lógica de sucesso da função restart_campaign.
+    """
     async with async_playwright() as p:
         context, page, browser = await create_context_and_login(p, server=server)
-        if not context: return False
+        if not context: 
+            return False
+        
         server_name = get_server_name(server)
 
         try:
-            print(f"[{server_name}] 1. Navegando para Limpeza UI...")
+            print(f"[{server_name}] 1. Iniciando navegação para Limpeza UI...")
+            # Pequena espera para estabilização após login
             await page.wait_for_timeout(5000)
             
-            # Navegação via menu lateral
+            # Navegação via menu lateral (Idêntico ao Restart)
             await page.get_by_role("link", name="send Discador Automático").click()
             await page.get_by_role("link", name="DA Preditivo").click(force=True)
             await asyncio.sleep(2)
             
-            # Clique seguro na aba 'Enviar'
+            # Clique seguro na aba 'Enviar' (Usa a melhoria safe_click_enviar)
             await safe_click_enviar(page)
 
-            print(f"[{server_name}] 2. Finalizando Campanha atual via UI...")
-            # Força a finalização via JS direto para ignorar obstruções
+            print(f"[{server_name}] 2. Localizando botão de finalização...")
+            
+            # Localiza o botão btParar e clica via JS direto (ignora bloqueios do DOM)
+            # Mesma lógica aplicada no restart_campaign
             botao_parar = page.locator(SELETOR_BOTAO_FINALIZAR).first
             await botao_parar.wait_for(state='attached', timeout=30000)
             await botao_parar.dispatch_event("click")
-            
+
+            # Confirmação no SweetAlert usando dispatch_event
             confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
             await confirmar.wait_for(state='attached', timeout=10000)
             await confirmar.dispatch_event("click")
             
-            print(f"[{server_name}] ✅ Campanha antiga finalizada com sucesso.")
-            await page.wait_for_timeout(2000)
+            print(f"[{server_name}] ✅ Campanha antiga encerrada com sucesso via UI.")
+            
+            # Tempo para o servidor processar a finalização antes de fechar
+            await page.wait_for_timeout(3000)
             return True
+            
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro durante a FINALIZAÇÃO da campanha: {e}")
+            print(f"[{server_name}] ❌ Erro durante a limpeza preventiva: {e}")
             return False
+            
         finally:
-            if browser: await browser.close()
+            if browser: 
+                await browser.close()
 
 async def restart_campaign(server: str): 
     async with async_playwright() as p:
@@ -191,6 +205,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     # Teste rápido manual
     asyncio.run(restart_campaign(server="MG"))
+
 
 
 
