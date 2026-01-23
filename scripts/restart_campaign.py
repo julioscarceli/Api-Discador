@@ -2,209 +2,119 @@
 
 import asyncio
 import re
+import os
 from playwright.async_api import async_playwright
-from utils.login_manager import create_context_and_login, get_fila_name, get_server_name
-from config.settings import SAIDAS_VALOR
 
-# --- Constantes de Seletores (Validados via seu HTML) ---
-SELETOR_TAB_ENVIAR = 'a[data-toggle="tab"]:has-text("Enviar")'
-SELETOR_BOTAO_FINALIZAR = 'button.btParar'
-SELETOR_CONFIRMAR_FINALIZAR = 'button.swal2-confirm, button:has-text("Sim, pode finalizar!")'
-SELETOR_INPUT_SAIDAS = '#saida'
-SELETOR_BOTAO_SUBIR_MAILING = '#btCampanha1'
-SELETOR_CARD_STATS = '.card-stats' 
+# --- CONFIGURAÇÕES VIA RAILWAY ---
+DISCADOR_USER = os.getenv("DISCADOR_USER", "SOMA")
+DISCADOR_PASS = os.getenv("DISCADOR_PASS", "123456")
+HEADLESS = os.getenv("HEADLESS_MODE", "True").lower() == "true"
+SAIDAS_VALOR = "100"
 
-async def get_current_campaign_name(page) -> str | None:
-    """Extrai o nome da campanha aguardando a renderização dinâmica."""
+URL_DA_SP = "https://186.194.50.149/azcall/pages/da.php"
+URL_DA_MG = "http://186.194.50.155/azcall/pages/da.php"
+
+async def select_dropdown_option_forced(page, button_xpath, text_to_find, server_label, is_telefone=False):
+    """
+    Usa seletores de precisão para garantir a seleção mesmo em modo Headless.
+    """
     try:
-        # Aguarda a estabilização da rede (AJAX concluído)
-        await page.wait_for_load_state("networkidle", timeout=30000)
-        await page.wait_for_selector(SELETOR_CARD_STATS, state='attached', timeout=45000)
-        
-        # Filtra o bloco stats que contém o texto da campanha
-        locator = page.locator('.stats').filter(has_text="MAILING_DISCADOR")
-        await locator.first.wait_for(state='visible', timeout=15000)
-        
-        text_content = await locator.first.inner_text()
-        
-        # Regex para isolar o nome real do mailing
-        match = re.search(r'MAILING_DISCADOR[^\n\r]+', text_content)
-        if match:
-            clean_name = match.group(0).replace('assignment:', '').strip()
-            return clean_name.split('  ')[0].strip()
-        return None
+        await page.locator(button_xpath).click()
+        await page.wait_for_timeout(1500)
+
+        if is_telefone:
+            # Seletores de precisão validados localmente
+            js_path_telefone = "#Discador > div:nth-child(1) > div > div > div > div:nth-child(2) > div:nth-child(2) > div:nth-child(3) > div > div > div > ul > li:nth-child(2) > a"
+            full_xpath_span = "/html/body/div[1]/div[2]/div[1]/div/form/div/div/div/div/div/div[1]/form/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/div/ul/li[2]/a/span[1]"
+            
+            # Clique via JS Path primeiro (mais robusto em headless)
+            await page.evaluate(f'document.querySelector("{js_path_telefone}").click()')
+            # Clique redundante via Full XPath para garantir
+            await page.locator(f"xpath={full_xpath_span}").dispatch_event("click")
+        else:
+            # Lógica padrão para demais dropdowns
+            option_link = page.locator('div.dropdown-menu.open ul li a').filter(has_text=text_to_find).first
+            await option_link.locator('span.text').first.dispatch_event("click")
+            
+        await page.wait_for_timeout(1000)
+        await page.keyboard.press("Enter")
+        await page.keyboard.press("Tab")
+        return True
     except Exception as e:
-        print(f"[DEBUG] Falha na extração de nome: {e}")
-        return None
+        print(f"[{server_label}] Erro no dropdown: {e}")
+        return False
 
-async def safe_click_enviar(page):
-    """Executa o clique na aba Enviar ignorando obstruções visuais."""
-    # Localiza o elemento
-    enviar_element = page.locator(SELETOR_TAB_ENVIAR).first
-    await enviar_element.wait_for(state='attached', timeout=20000)
-    
-    # SOLUÇÃO PARA O ERRO: Dispara o clique via JS para ignorar a Navbar que está na frente
-    print("[DEBUG] Disparando clique forçado na aba Enviar...")
-    await enviar_element.dispatch_event("click")
-
-async def finalize_campaign_only(server: str):
-    """
-    Navega até a página de envio e executa apenas a finalização da campanha atual.
-    Espelha a lógica de sucesso da função restart_campaign.
-    """
+async def restart_campaign(server: str):
+    """Executa o fluxo de restart otimizado para Railway."""
     async with async_playwright() as p:
-        context, page, browser = await create_context_and_login(p, server=server)
-        if not context: 
-            return False
-        
-        server_name = get_server_name(server)
+        browser = await p.chromium.launch(headless=HEADLESS)
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
+
+        url_alvo = URL_DA_SP if server == "SP" else URL_DA_MG
+        fila_name = "DISCADOR_SP" if server == "SP" else "DISCADOR_MG"
 
         try:
-            print(f"[{server_name}] 1. Iniciando navegação para Limpeza UI...")
-            # Pequena espera para estabilização após login
+            print(f"[{server}] Iniciando restart via Railway...")
+            await page.goto(url_alvo, timeout=60000)
+
+            # --- LOGIN ---
+            user_input = page.locator('input[name="user"], input[placeholder*="Usuá"]').first
+            if await user_input.is_visible(timeout=10000):
+                await user_input.fill(DISCADOR_USER)
+                await page.locator('input[type="password"]').fill(DISCADOR_PASS)
+                await page.locator('button:has-text("ENTRAR")').click()
+                await page.wait_for_load_state("networkidle")
+
+            # --- ABA ENVIAR ---
+            await page.locator('a[data-toggle="tab"]:has-text("Enviar")').dispatch_event("click")
+            await page.wait_for_timeout(3000)
+
+            # --- IDENTIFICAÇÃO ---
+            await page.wait_for_selector(".card-stats", state="visible", timeout=20000)
+            stats_text = await page.locator(".card-stats").inner_text()
+            match = re.search(r'MAILING_DISCADOR[^\s\n\r\-]+', stats_text)
+            
+            if not match:
+                return False
+
+            current_campaign = match.group(0).strip()
+            print(f"[{server}] Campanha Detectada: {current_campaign}")
+
+            # --- FINALIZAÇÃO ---
+            await page.locator('button.btParar').first.dispatch_event("click")
+            await page.locator('button.swal2-confirm').click()
             await page.wait_for_timeout(5000)
-            
-            # Navegação via menu lateral (Idêntico ao Restart)
-            await page.get_by_role("link", name="send Discador Automático").click()
-            await page.get_by_role("link", name="DA Preditivo").click(force=True)
-            await asyncio.sleep(2)
-            
-            # Clique seguro na aba 'Enviar' (Usa a melhoria safe_click_enviar)
-            await safe_click_enviar(page)
 
-            print(f"[{server_name}] 2. Localizando botão de finalização...")
-            
-            # Localiza o botão btParar e clica via JS direto (ignora bloqueios do DOM)
-            # Mesma lógica aplicada no restart_campaign
-            botao_parar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao_parar.wait_for(state='attached', timeout=30000)
-            await botao_parar.dispatch_event("click")
+            # --- RECONFIGURAÇÃO ---
+            # 1. Campanha
+            await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[2]/div/div/button', current_campaign, server)
 
-            # Confirmação no SweetAlert usando dispatch_event
-            confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
-            await confirmar.wait_for(state='attached', timeout=10000)
-            await confirmar.dispatch_event("click")
-            
-            print(f"[{server_name}] ✅ Campanha antiga encerrada com sucesso via UI.")
-            
-            # Tempo para o servidor processar a finalização antes de fechar
-            await page.wait_for_timeout(3000)
-            return True
-            
-        except Exception as e:
-            print(f"[{server_name}] ❌ Erro durante a limpeza preventiva: {e}")
-            return False
-            
-        finally:
-            if browser: 
-                await browser.close()
+            # 2. Telefone (O ponto corrigido!)
+            await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/button', current_campaign, server, is_telefone=True)
 
-async def restart_campaign(server: str): 
-    async with async_playwright() as p:
-        context, page, browser = await create_context_and_login(p, server=server)
-        if not context: return False
+            # 3. Fila
+            await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[6]/div/div[1]/button', fila_name, server)
 
-        server_name = get_server_name(server)
-        fila_name = get_fila_name(server)
-
-        try:
-            print(f"[{server_name}] 1. Navegando para aba de Envio...")
-            await page.wait_for_timeout(5000) 
-            
-            # Navegação via menu lateral
-            await page.get_by_role("link", name="send Discador Automático").click()
-            await page.get_by_role("link", name="DA Preditivo").click(force=True)
-            await asyncio.sleep(2)
-            
-            # Clique seguro na aba 'Enviar'
-            await safe_click_enviar(page)
-
-            # Extração do nome
-            current_campaign = await get_current_campaign_name(page)
-
-            if not current_campaign:
-                print(f"[{server_name}] ⚠️ Alerta: Dados não carregaram. Tentando F5...")
-                await page.reload()
-                await page.wait_for_timeout(5000)
-                await safe_click_enviar(page)
-                current_campaign = await get_current_campaign_name(page)
-                if not current_campaign: return False
-
-            print(f"[{server_name}] ✅ Campanha identificada: {current_campaign}")
-
-            # Parada da campanha atual via JS para evitar interceptação
-            botao_parar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await botao_parar.wait_for(state='attached', timeout=30000)
-            await botao_parar.dispatch_event("click")
-            
-            confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
-            await confirmar.wait_for(state='attached', timeout=10000)
-            await confirmar.dispatch_event("click")
-            
-            await page.wait_for_timeout(5000) 
-
-# ----------------------------------------------------
-            # ETAPA 3: RECONFIGURAÇÃO E DISPARO (AÇÕES ROBUSTAS)
-            # ----------------------------------------------------
-            print(f"[{server_name}] 3. Reconfigurando discagem...")
-
-            # --- AÇÃO A: Selecionar a CAMPANHA (2ª Coluna) ---
-            # Localiza o botão pelo XPath específico da estrutura que você enviou
-            btn_campanha = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[2]/div/div/button')
-            await btn_campanha.wait_for(state='visible', timeout=10000)
-            await btn_campanha.click()
-            await page.wait_for_timeout(1000) 
-
-            # Clica na opção que contém o nome da campanha (MAILING_DISCADOR...)
-            # Usamos .first para evitar o erro de duplicidade (strict mode)
-            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=current_campaign).first.click()
-            print(f"[{server_name}] - Campanha '{current_campaign}' selecionada.")
-
-            # --- AÇÃO B: Selecionar o TELEFONE (3ª Coluna) ---
-            btn_telefone = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/button')
-            await btn_telefone.wait_for(state='visible', timeout=10000)
-            await btn_telefone.click()
+            # --- DISPARO FINAL ---
+            await page.locator("#saida").fill(SAIDAS_VALOR)
             await page.wait_for_timeout(1000)
+            await page.locator("#btCampanha1").dispatch_event("click")
 
-            # Seleciona a opção de telefone correspondente
-            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=current_campaign).first.click()
-            print(f"[{server_name}] - Telefone selecionado.")
-
-            # --- AÇÃO C: Selecionar a FILA DE ATENDIMENTO (6ª Coluna) ---
-            btn_fila = page.locator('//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[6]/div/div[1]/button')
-            await btn_fila.wait_for(state='visible', timeout=10000)
-            await btn_fila.click()
-            await page.wait_for_timeout(1000)
-
-            # Seleciona a fila conforme a região (DISCADOR_SP ou DISCADOR_MG)
-            await page.locator('div.dropdown-menu.open ul li a').filter(has_text=fila_name).first.click()
-            print(f"[{server_name}] - Fila '{fila_name}' selecionada.")
-
-            # --- FINALIZAÇÃO: Saídas e Botão Subir ---
-            # Preenche o campo Saídas (#saida)
-            input_saidas = page.locator(SELETOR_INPUT_SAIDAS)
-            await input_saidas.wait_for(state='visible')
-            await input_saidas.fill(str(SAIDAS_VALOR))
-
-            # Clica no botão de aviãozinho para disparar (#btCampanha1)
-            btn_subir = page.locator(SELETOR_BOTAO_SUBIR_MAILING)
-            await btn_subir.wait_for(state='visible')
-            await btn_subir.click()
-            
-            await page.wait_for_timeout(3000)
-            print(f"[{server_name}] ✅ RESTART EXECUTADO COM SUCESSO!")
+            print(f"[{server}] ✅ RESTART CONCLUÍDO COM SUCESSO.")
             return True
 
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro Crítico no Restart: {e}")
+            print(f"❌ Erro Railway: {e}")
             return False
         finally:
-            if browser: 
-                await browser.close()
+            await browser.close()
 
 if __name__ == '__main__':
-    # Teste rápido manual
-    asyncio.run(restart_campaign(server="MG"))
+    # No Railway, o servidor é passado dinamicamente
+    target_server = os.getenv("TARGET_SERVER", "SP")
+    asyncio.run(restart_campaign(server=target_server))
+
 
 
 
