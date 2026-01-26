@@ -92,28 +92,40 @@ async def upload_mailing(server_id: str, data: Dict[str, Any]):
         mailling_name = data.get('mailling_name', f"Upload_{srv}")
         id_oficial = ID_CAMPANHA_SP if srv == "SP" else ID_CAMPANHA_MG
         
-        # 1. Limpeza UI
+        # 1. Limpeza UI (Agora com log de confirmação)
         await report_to_monitor(srv, "Limpeza UI", "processando", "Limpando campanha ativa", mailling_name)
-        await finalize_campaign_only(server=srv)
+        sucesso_limpeza = await finalize_campaign_only(server=srv)
+        
+        if not sucesso_limpeza:
+            print(f"[{srv}] ⚠️ Aviso: A limpeza da UI pode ter falhado, prosseguindo mesmo assim...")
 
-        # 2. Sessão e Campanha
+        # 2. Captura Sessão (Para o Import via API)
         session_cookies = await login_manager.get_active_session(srv) if login_manager else {}
+        
+        # 3. Criação/Associação da Campanha
         id_dinamico = await api_create_campaign(server=srv, mailing_name=mailling_name, cookies=session_cookies)
         id_final = str(id_dinamico if id_dinamico else id_oficial)
 
-        # 3. Importação
+        # 4. Importação Real
         resultado = await api_import_mailling_upload(
-            server=srv, campaign_id=id_final, file_content_base64=data.get('file_content_base64'),
-            mailling_name=mailling_name, login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
+            server=srv, 
+            campaign_id=id_final, 
+            file_content_base64=data.get('file_content_base64'),
+            mailling_name=mailling_name, 
+            login_crm=data.get('login_crm', 'DASHBOARD_LOVABLE')
         )
+        
+        # LOG DE SUCESSO FINAL
+        await report_to_monitor(srv, "Importação", "concluido", f"ID Campanha: {id_final}", mailling_name)
+        
         return {"status": "sucesso", "campanha_id": id_final, "resposta": resultado}
     except Exception as e:
-        await report_to_monitor(server_id.upper(), "Erro Fatal", "erro", str(e), data.get('mailling_name', 'N/A'))
-        raise HTTPException(status_code=500, detail=str(e))
+        # ... erro
 
 @app.get("/api/logs/")
 async def get_logs():
     return [{"timestamp": datetime.now().strftime('%H:%M:%S'), "acao": "Sincronização", "regiao": "REDIS-SERVER", "status": "Ativo"}]
+
 
 
 
