@@ -45,18 +45,44 @@ async def select_dropdown_option_forced(page, button_xpath, text_to_find, server
         return False
 
 async def finalize_campaign_only(server: str):
-    """Necessária para evitar erro de importação na api_server.py."""
+    """Finaliza a campanha ativa para garantir que o banco esteja limpo para o novo upload."""
+    server_name = server.upper()
     async with async_playwright() as p:
+        # Usa a função otimizada de login que já criamos
         context, page, browser = await create_context_and_login(p, server=server)
-        if not context: return False
+        if not context: 
+            print(f"[{server_name}] ❌ Falha no login para finalização.")
+            return False
+            
         try:
-            await page.locator(SELETOR_TAB_ENVIAR).first.dispatch_event("click")
-            await page.wait_for_timeout(3000)
-            await page.locator(SELETOR_BOTAO_FINALIZAR).first.dispatch_event("click")
-            await page.locator(SELETOR_CONFIRMAR_FINALIZAR).first.dispatch_event("click")
+            print(f"[{server_name}] ⏳ Iniciando sequência de finalização...")
+            
+            # 1. Clica na aba Enviar
+            aba_enviar = page.locator(SELETOR_TAB_ENVIAR).first
+            await aba_enviar.wait_for(state="visible", timeout=10000)
+            await aba_enviar.click() # Usar click comum aqui é melhor para garantir foco
+
+            # 2. Clica no botão Finalizar (Aguardar ele estar disponível)
+            btn_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            await btn_finalizar.wait_for(state="attached", timeout=10000)
+            await btn_finalizar.dispatch_event("click")
+            
+            # 3. CONFIRMAÇÃO (O ponto crítico)
+            # Esperamos o seletor de confirmação aparecer de fato antes de clicar
+            btn_confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
+            await btn_confirmar.wait_for(state="visible", timeout=5000)
+            await btn_confirmar.click()
+            
+            # Pequena espera para o servidor processar a finalização antes de fechar o browser
+            await page.wait_for_timeout(2000)
+            
+            print(f"[{server_name}] ✅ Campanha finalizada com sucesso.")
             return True
-        except: return False
-        finally: await browser.close()
+        except Exception as e:
+            print(f"[{server_name}] ❌ Erro ao finalizar campanha: {str(e)}")
+            return False
+        finally:
+            await browser.close()
 
 async def restart_campaign(server: str):
     """Fluxo ultra-resiliente para eliminar o Timeout do Railway."""
@@ -137,6 +163,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
