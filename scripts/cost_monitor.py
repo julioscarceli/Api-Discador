@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import redis
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
@@ -17,13 +17,14 @@ USUARIO = os.getenv("NEXT_ROUTER_USER")
 SENHA = os.getenv("NEXT_ROUTER_PASS")
 API_URL_INTERNA = "https://api-discador-production.up.railway.app/api/atualizar-custos"
 
-# Configuração do Redis (Baseado no seu print do Railway)
+# Configuração do Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def clean_to_float(value):
     if value == "—" or value is None: return 0.0
     try:
+        # Remove R$, espaços e ajusta separadores decimais
         value = re.sub(r'[^\d,.]', '', str(value))
         return float(value.replace('.', '').replace(',', '.'))
     except: return 0.0
@@ -52,11 +53,15 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             context = await browser.new_context(ignore_https_errors=True)
             page = await context.new_page()
 
+            # Bloqueio de recursos inúteis para economizar banda/tempo
+            await page.route("**/*.{png,jpg,jpeg,css}", lambda route: route.abort())
+
             print(f"[WORKER-DEBUG] 🌐 Acessando roteador em: {BASE_URL}")
-            await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
+            await page.goto(BASE_URL, wait_until="commit", timeout=60000)
             
-            await page.fill("#username", USUARIO)
-            await page.fill("#password", SENHA)
+            # Login Otimizado
+            await page.locator("#username").fill(USUARIO)
+            await page.locator("#password").fill(SENHA)
             await page.click('button:has-text("Conectar")')
             
             # 1. Extração do Saldo
@@ -68,7 +73,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             # 2. Navegação para Relatórios
             print("[WORKER-DEBUG] 🖱️ Navegando para Relatórios Agrupados...")
             await page.click('#main-menu > li:nth-child(5) > a') 
-            await page.wait_for_timeout(2000) 
+            await asyncio.sleep(2) 
             await page.click("#relatorioAgrupadoLinhas", force=True)
             
             # 3. Extração de Consumo Hoje
@@ -79,19 +84,25 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
                 ura_text = await page.locator('#tblMain > tbody > tr:nth-child(2) > td:nth-child(7)').text_content(timeout=5000)
                 custo_diario = clean_to_float(discador_text) + clean_to_float(ura_text)
             except:
-                print("[WORKER-DEBUG] ℹ️ Tabela de hoje vazia.")
+                print("[WORKER-DEBUG] ℹ️ Tabela de hoje vazia ou não carregada.")
 
-            # --- LÓGICA REDIS: ACUMULADO SEMANAL ---
-            hoje_str = datetime.now().strftime('%Y-%m-%d')
-            # Salva o custo de hoje no Redis para compor o histórico
-            r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200) # Expira em 8 dias
+            # --- LÓGICA REDIS: ACUMULADO SEMANAL (Segunda a Hoje) ---
+            hoje = datetime.now()
+            hoje_str = hoje.strftime('%Y-%m-%d')
+            
+            # Salva o custo do dia atual (expira em 8 dias)
+            r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200)
 
-            # Soma os últimos 7 dias presentes no Redis
+            # Calcula o range de Segunda-feira (0) até Hoje
+            dias_desde_segunda = hoje.weekday() 
             total_semanal = 0.0
-            chaves_dias = r.keys("custo_hist_*")
-            for key in chaves_dias:
-                val = r.get(key)
-                total_semanal += float(val) if val else 0.0
+            
+            # Itera apenas os dias da semana corrente
+            for i in range(dias_desde_segunda + 1):
+                data_busca = (hoje - timedelta(days=i)).strftime('%Y-%m-%d')
+                val = r.get(f"custo_hist_{data_busca}")
+                if val:
+                    total_semanal += float(val)
 
             dados = {
                 "saldo_atual": clean_to_float(saldo_text),
@@ -126,6 +137,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} | Semanal: {fmt['custo_semanal']} ---")
+
 
 
 
