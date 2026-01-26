@@ -49,7 +49,7 @@ def get_server_name(server: str) -> str:
     return server.upper()
 
 
-# utils/login_manager.py (Trecho Otimizado)
+# utils/login_manager.py (Trecho Otimizado com Login Forçado)
 
 async def create_context_and_login(playwright_instance, server: str):
     login_url = get_login_url(server) 
@@ -64,20 +64,27 @@ async def create_context_and_login(playwright_instance, server: str):
         # BLOQUEIO DE RECURSOS: Impede o carregamento de imagens e CSS pesado para ganhar velocidade
         await page.route("**/*.{png,jpg,jpeg,css}", lambda route: route.abort())
 
-        # Reduzimos a exigência de espera: "commit" já é suficiente para começar a preencher
         print(f"[{server_name}] Acessando: {login_url}")
+        # "commit" é o gatilho mais rápido possível
         await page.goto(login_url, timeout=90000, wait_until="commit") 
 
-        # Pequena pausa para garantir que os inputs foram renderizados
-        await page.wait_for_selector('input[name="login"]', timeout=10000)
+        # 1. Localizadores e Espera de Presença
+        user_input = page.locator('input[name="login"], input[placeholder*="Usuá"]').first
+        await user_input.wait_for(state="attached", timeout=15000)
 
-        await page.fill('input[name="login"]', USUARIO) 
-        await page.fill('input[name="password"]', SENHA)
+        # 2. Preenchimento via JS (Evita erros de input travado ou caracteres especiais)
+        await user_input.evaluate("(el, val) => el.value = val", USUARIO)
+        await page.locator('input[type="password"]').first.evaluate("(el, val) => el.value = val", SENHA)
         
-        # Clica e aguarda apenas o necessário
-        await page.click('button:has-text("ENTRAR")', timeout=60000) 
+        # 3. Localiza o botão e dispara Clique Forçado via Dispatch
+        btn_entrar = page.locator('button:has-text("ENTRAR")').first
+        await btn_entrar.wait_for(state="attached", timeout=15000)
         
-        # Espera o seletor principal (aumentamos a tolerância aqui)
+        print(f"[{server_name}] Disparando clique forçado no Login...")
+        await btn_entrar.dispatch_event("click")
+        
+        # 4. Espera o seletor principal da Home para confirmar sucesso
+        # Mudamos para 'visible' para garantir que o redirecionamento ocorreu
         await page.wait_for_selector('a[href="#Discador_AutomáticoCollapse"]', state='visible', timeout=45000)
         
         print(f"[{server_name}] ✅ Login realizado!")
@@ -131,6 +138,7 @@ class LoginManager:
                 print(f"[{server_name}] ⚠️ PHPSESSID não encontrado nos cookies.")
                 
             return session_dict
+
 
 
 
