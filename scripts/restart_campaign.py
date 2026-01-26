@@ -45,41 +45,58 @@ async def select_dropdown_option_forced(page, button_xpath, text_to_find, server
         return False
 
 async def finalize_campaign_only(server: str):
-    """Finaliza a campanha ativa para garantir que o banco esteja limpo para o novo upload."""
+    """Finaliza a campanha ativa com verificação de estado para garantir a limpeza."""
     server_name = server.upper()
     async with async_playwright() as p:
-        # Usa a função otimizada de login que já criamos
+        # 1. Login com a nossa função otimizada
         context, page, browser = await create_context_and_login(p, server=server)
         if not context: 
             print(f"[{server_name}] ❌ Falha no login para finalização.")
             return False
             
         try:
-            print(f"[{server_name}] ⏳ Iniciando sequência de finalização...")
+            print(f"[{server_name}] ⏳ Acedendo à aba de controlo...")
             
-            # 1. Clica na aba Enviar
+            # 2. Ir para a aba Enviar (Onde estão os controlos)
+            # Esperamos que o seletor esteja não apenas visível, mas estável
             aba_enviar = page.locator(SELETOR_TAB_ENVIAR).first
-            await aba_enviar.wait_for(state="visible", timeout=10000)
-            await aba_enviar.click() # Usar click comum aqui é melhor para garantir foco
-
-            # 2. Clica no botão Finalizar (Aguardar ele estar disponível)
-            btn_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            await btn_finalizar.wait_for(state="attached", timeout=10000)
-            await btn_finalizar.dispatch_event("click")
+            await aba_enviar.wait_for(state="visible", timeout=15000)
+            await aba_enviar.click(force=True)
             
-            # 3. CONFIRMAÇÃO (O ponto crítico)
-            # Esperamos o seletor de confirmação aparecer de fato antes de clicar
-            btn_confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
-            await btn_confirmar.wait_for(state="visible", timeout=5000)
-            await btn_confirmar.click()
-            
-            # Pequena espera para o servidor processar a finalização antes de fechar o browser
+            # Pequena pausa para a UI carregar os botões da aba
             await page.wait_for_timeout(2000)
-            
-            print(f"[{server_name}] ✅ Campanha finalizada com sucesso.")
+
+            # 3. Clicar em Finalizar
+            btn_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
+            if await btn_finalizar.is_visible():
+                print(f"[{server_name}] 🖱️ Clicando no botão Finalizar...")
+                await btn_finalizar.click(force=True)
+                
+                # 4. Confirmar no Modal (O ponto onde costuma falhar)
+                btn_confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
+                # Esperamos o modal de confirmação aparecer
+                await btn_confirmar.wait_for(state="visible", timeout=7000)
+                
+                print(f"[{server_name}] ⚠️ Confirmando finalização...")
+                await btn_confirmar.click(force=True)
+                
+                # --- VERIFICAÇÃO DE SUCESSO ---
+                # Em vez de apenas esperar 2s, esperamos o botão de confirmar desaparecer
+                # Isso indica que o servidor respondeu e a UI fechou o modal.
+                await btn_confirmar.wait_for(state="hidden", timeout=10000)
+                
+                # Espera extra de segurança para o DB do discador processar
+                await page.wait_for_timeout(3000)
+                print(f"[{server_name}] ✅ Campanha finalizada e confirmada.")
+            else:
+                print(f"[{server_name}] ℹ️ Botão finalizar não visível (Campanha já pode estar parada).")
+
             return True
+
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro ao finalizar campanha: {str(e)}")
+            print(f"[{server_name}] ❌ Erro Crítico na Finalização: {str(e)}")
+            # Tira um print se falhar (útil para debug no Railway se tiveres volume mapeado)
+            # await page.screenshot(path=f"erro_finalizar_{server_name}.png")
             return False
         finally:
             await browser.close()
@@ -163,6 +180,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
