@@ -57,27 +57,33 @@ def extract_metrics(status_data, server_name):
 
 
 # --- ATUALIZAÇÃO DA LINHA 1 (CONFIGURAÇÃO 2026 / 24H) ---
+# utils/mailing_api.py
+
 def _generate_metadata_line(campaign_id: str, mailling_name: str, server: str, login_crm: str = "AUTOMACAO") -> str:
-    """Cria a primeira linha de metadados (15 colunas) garantindo discagem imediata."""
+    """Garante que SP use a fila SP e MG use a fila MG."""
     data_hoje = dt.now().strftime('%Y-%m-%d')
     hora_agora = dt.now().strftime('%H:%M:%S')
     
+    # BUSCA DINÂMICA: Se server for 'SP', retorna 'DISCADOR_SP'. Se 'MG', retorna 'DISCADOR_MG'.
+    # Isso corrige o erro onde o card aparecia como 'sem'
+    fila_especifica = get_fila_name(server) 
+
     metadata = [
-        str(campaign_id),                # Coluna A: ID da campanha
-        str(mailling_name),              # Coluna B: Nome do Mailing
-        str(SAIDAS_VALOR),               # Coluna C: Canais
-        "sem",                           # Coluna D: Fila (URA Reversa usa 'sem')
-        f"{data_hoje} {hora_agora}",     # Coluna E: Data/Hora
-        str(login_crm),                  # Coluna F: Login CRM
-        data_hoje,                       # Coluna G: Data inicial
-        "2026-12-31",                    # Coluna H: Data final
-        "00:00:01",                      # Coluna I: Hora inicial
-        "23:59:59",                      # Coluna J: Hora final
-        "1",                             # Coluna K: Tentativas
-        "simultanea",                    # Coluna L: Velocidade
-        "1,2,3,4,5,6,7",                 # Coluna M: Dias da semana
-        "",                              # Coluna N: Audio
-        ""                               # Coluna O: Opções URA
+        str(campaign_id),                # Coluna A
+        str(mailling_name).split('.')[0],# Coluna B (Nome limpo)
+        str(SAIDAS_VALOR),               # Coluna C
+        str(fila_especifica),            # Coluna D: AQUI ENTRA A FILA CORRETA (SP ou MG)
+        f"{data_hoje} {hora_agora}",     # Coluna E
+        str(login_crm),                  # Coluna F
+        data_hoje,                       # Coluna G
+        "2026-12-31",                    # Coluna H
+        "08:00:00",                      # Coluna I
+        "20:00:00",                      # Coluna J
+        "1",                             # Coluna K
+        "simultanea",                    # Coluna L
+        "1,2,3,4,5,6",                   # Coluna M
+        "silencio",                      # Coluna N
+        ""                               # Coluna O
     ]
     return ";".join(metadata)
 
@@ -246,6 +252,7 @@ async def api_import_mailling_upload(server: str, campaign_id: str, file_content
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
 
 
 
