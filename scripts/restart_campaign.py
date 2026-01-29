@@ -45,54 +45,67 @@ async def select_dropdown_option_forced(page, button_xpath, text_to_find, server
         return False
 
 async def finalize_campaign_only(server: str):
-    """Finaliza a campanha ativa forçando eventos para evitar falhas no Railway."""
+    """
+    Finaliza a campanha ativa usando a mesma lógica resiliente da restart_campaign.
+    Garante que o robô não fique preso em páginas de resumo (rs.php/ch.php).
+    """
     server_name = server.upper()
-    url_alvo = URL_DA_SP if server_name == "SP" else URL_DA_MG
-
     async with async_playwright() as p:
-        # 1. Login
-        context, page, browser = await create_context_and_login(p, server=server)
-        if not context: 
-            print(f"[{server_name}] ❌ Falha no login para finalização.")
-            return False
-            
+        # 1. Configuração do Browser (Igual ao restart_campaign)
+        browser = await p.chromium.launch(headless=HEADLESS)
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
+
+        url_alvo = URL_DA_SP if server_name == "SP" else URL_DA_MG
+
         try:
-            # CORREÇÃO DE ROTA: Garante que está na página correta antes de procurar os botões
+            print(f"[{server_name}] Finalizando: Acessando URL Direta...")
+            # Força o carregamento da página de discagem imediatamente
+            await page.goto(url_alvo, wait_until="commit", timeout=60000)
+
+            # --- LOGIN RÁPIDO (Caso a sessão não esteja ativa) ---
+            user_input = page.locator('input[name="user"], input[placeholder*="Usuá"]').first
+            if await user_input.is_visible(timeout=5000):
+                await user_input.fill(DISCADOR_USER)
+                await page.locator('input[type="password"]').fill(DISCADOR_PASS)
+                await page.locator('button:has-text("ENTRAR")').click()
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+
+            # --- GARANTIA DE ROTA (Onde estava falhando) ---
             if "da.php" not in page.url:
-                await page.goto(url_alvo, wait_until="domcontentloaded", timeout=30000)
+                print(f"[{server_name}] Desvio detectado ({page.url}). Forçando DA...")
+                await page.goto(url_alvo, wait_until="domcontentloaded", timeout=45000)
 
-            print(f"[{server_name}] ⏳ Acessando aba Enviar...")
-            aba_enviar = page.locator(SELETOR_TAB_ENVIAR).first
-            await aba_enviar.wait_for(state="attached", timeout=15000)
-            # USAR dispatch_event para garantir o clique no Railway
-            await aba_enviar.dispatch_event("click")
+            # --- ABA ENVIAR (Click via JS) ---
+            print(f"[{server_name}] Sincronizando aba Enviar...")
+            aba = page.locator(SELETOR_TAB_ENVIAR).first
+            await aba.wait_for(state="attached", timeout=30000)
+            await aba.dispatch_event("click")
             
-            await page.wait_for_timeout(3000)
+            # Espera o carregamento dos cards
+            await page.wait_for_selector(".card-stats", state="visible", timeout=30000)
 
-            # 3. Clicar em Finalizar
+            # --- FINALIZAÇÃO (Click via JS) ---
             btn_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
-            # Verificamos se está anexado ao DOM em vez de apenas visível
             if await btn_finalizar.count() > 0:
                 print(f"[{server_name}] 🖱️ Disparando Finalizar...")
                 await btn_finalizar.dispatch_event("click")
                 
-                # 4. Confirmar no Modal
+                # Confirmar no Modal
                 btn_confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
                 await btn_confirmar.wait_for(state="attached", timeout=10000)
-                
-                print(f"[{server_name}] ⚠️ Confirmando...")
                 await btn_confirmar.dispatch_event("click")
                 
-                # Aguarda o processamento sem travar o script
+                # Espera o processamento do servidor
                 await page.wait_for_timeout(5000)
-                print(f"[{server_name}] ✅ Campanha finalizada com sucesso.")
-                return True
+                print(f"[{server_name}] ✅ Campanha FINALIZADA com sucesso.")
             else:
-                print(f"[{server_name}] ℹ️ Botão não encontrado. Campanha já deve estar parada.")
-                return True
+                print(f"[{server_name}] ℹ️ Campanha já estava parada.")
+
+            return True
 
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro Crítico: {str(e)}")
+            print(f"[{server_name}] ❌ Falha na finalização: {e}")
             return False
         finally:
             await browser.close()
@@ -176,6 +189,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
