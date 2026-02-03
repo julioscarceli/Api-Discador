@@ -50,7 +50,7 @@ async def run_daily_import_pipeline(server: str):
 
     # 3. PASSO 2: IMPORTAÇÃO DO NOVO MAILING (API Multipart POST)
     try:
-        mailling_name_for_api = base_name + datetime.now().strftime(' - %d-%m')
+        mailling_name_for_api = base_name
 
         upload_result = await api_import_mailling_upload(
             server=server,
@@ -78,3 +78,4 @@ async def run_daily_import_pipeline(server: str):
 
     print(f"--- [DAILY IMPORT - {server_name}] Pipeline Concluído! ---")
     return True
+
