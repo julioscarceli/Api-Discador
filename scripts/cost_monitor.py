@@ -22,7 +22,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOx
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def formatar_valor_voip(texto):
-    """Formata '1.201,55750' para float 1201.56."""
+    """Formata valores como '1.201,55750' para float 1201.56."""
     if not texto: return 0.0
     try:
         limpo = texto.strip().replace('.', '').replace(',', '.')
@@ -49,50 +49,60 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=headless, 
-                args=["--no-sandbox", "--disable-dev-shm-usage"]
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
             )
             context = await browser.new_context(
                 ignore_https_errors=True,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
 
             # 1. LOGIN
             print(f"[WORKER] 🌐 Acessando Portal: {URL_LOGIN}")
-            await page.goto(URL_LOGIN, wait_until="load", timeout=90000)
+            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=90000)
             
-            await page.locator('//*[@id="j_id27:login"]').fill(USUARIO)
-            await page.locator('//*[@id="j_id27:password"]').fill(SENHA)
+            await page.locator('input[id*="login"]').fill(USUARIO)
+            await page.locator('input[id*="password"]').fill(SENHA)
             
             print("[WORKER] 🔑 Realizando login...")
-            # Em vez de wait_for_navigation, clicamos e aguardamos o seletor da página interna
+            # Clicamos e esperamos a carga da página, mas sem depender de navegação estrita
             await page.locator('input[value="Acessar Portal"]').click()
             
-            # Espera um elemento que só existe APÓS o login (Menu ou Saldo)
-            await page.wait_for_selector("span.textoCredit", state="visible", timeout=60000)
+            # Espera forçada para renderização do dashboard JSF no Railway
+            await page.wait_for_timeout(10000) 
 
-            # 2. EXTRAÇÃO DO SALDO
+            # 2. EXTRAÇÃO DO SALDO (Tenta múltiplos seletores)
             print("[WORKER] 💰 Extraindo Saldo...")
-            saldo_raw = await page.locator("span.textoCredit").first.inner_text()
+            saldo_raw = ""
+            try:
+                # Seletor por classe CSS
+                await page.wait_for_selector("span.textoCredit", state="visible", timeout=45000)
+                saldo_raw = await page.locator("span.textoCredit").first.inner_text()
+            except:
+                print("[WORKER] ⚠️ CSS falhou, tentando seletor de ID parcial...")
+                await page.wait_for_selector('span[id*="panelPersonInfo"]', state="visible", timeout=20000)
+                saldo_raw = await page.locator('span[id*="panelPersonInfo"]').first.inner_text()
+
             saldo_final = formatar_valor_voip(saldo_raw)
             print(f"[WORKER] ✅ Saldo extraído: {saldo_final}")
 
             # 3. NAVEGAÇÃO E CONSUMO
             print("[WORKER] 📂 Gerando Relatório de Consumo...")
-            await page.locator('//*[@id="iconfrmMenu:j_id50"]').click()
-            await page.wait_for_load_state("networkidle")
+            # Usa o texto do menu para clicar
+            await page.get_by_text("Chamadas Saintes").click()
+            await page.wait_for_timeout(5000)
             
             await page.locator('input[value="Gerar Relatório"]').click()
             
             # XPath do rodapé validado localmente
             consumo_xpath = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
             
-            await page.wait_for_selector(f"xpath={consumo_xpath}", state="visible", timeout=60000)
-            await asyncio.sleep(4) # Pausa técnica SipPulse
+            await page.wait_for_selector(f"xpath={consumo_xpath}", state="attached", timeout=60000)
+            await asyncio.sleep(5) # Pausa técnica robusta para processamento de tabela
 
             consumo_raw = await page.locator(f"xpath={consumo_xpath}").inner_text()
             custo_diario = formatar_valor_voip(consumo_raw)
-            print(f"[WORKER] ✅ Consumo diário: {custo_diario}")
+            print(f"[WORKER] ✅ Consumo diário extraído: {custo_diario}")
 
             # LÓGICA REDIS
             hoje_str = datetime.now().strftime('%Y-%m-%d')
@@ -118,7 +128,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         if browser: await browser.close()
 
 async def enviar_para_api(dados: Dict[str, Any]):
-    """Envia dados para o Gateway."""
+    """Envia os dados para a API Gateway."""
     print(f"[WORKER-API] 📡 Enviando para Gateway...")
     async with httpx.AsyncClient() as client:
         try:
@@ -134,6 +144,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+
 
 
 
