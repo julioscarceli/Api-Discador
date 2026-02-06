@@ -113,6 +113,8 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
 
 # ... (Manter o restante das funções enviar_para_api e main)
 
+# ... (Manter o restante das funções enviar_para_api e main)
+
 async def enviar_para_api(dados: Dict[str, Any]):
     """Envia os dados para a API Gateway atualizar o dashboard."""
     print(f"[WORKER-API] 📡 Enviando dados para Gateway...")
@@ -135,6 +137,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [WORKER FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+
 
 
 
