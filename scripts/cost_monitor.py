@@ -11,7 +11,7 @@ from playwright.async_api import async_playwright
 
 load_dotenv()
 
-# --- Configurações do Novo VOIP (SipPulse) ---
+# --- Configurações ---
 URL_LOGIN = "http://187.60.56.102:8080/SipPulsePortal/pages/login/login.jsf"
 USUARIO = os.getenv("NEXT_ROUTER_USER", "99971111225@sip2.v01p.com.br")
 SENHA = os.getenv("NEXT_ROUTER_PASS", "jLEf2LMG8X9t8P7P")
@@ -30,7 +30,7 @@ def formatar_valor_voip(texto):
     except: return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Formata os dados para exibição no Dashboard (R$ 0,00)."""
+    """Prepara os dados no formato R$ 0,00 para o front-end."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
@@ -49,7 +49,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=headless, 
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
             context = await browser.new_context(
                 ignore_https_errors=True,
@@ -58,33 +58,41 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             page = await context.new_page()
 
             # 1. LOGIN
+            print(f"[WORKER] 🌐 Acessando Portal: {URL_LOGIN}")
             await page.goto(URL_LOGIN, wait_until="load", timeout=90000)
+            
             await page.locator('//*[@id="j_id27:login"]').fill(USUARIO)
             await page.locator('//*[@id="j_id27:password"]').fill(SENHA)
             
-            await asyncio.gather(
-                page.wait_for_navigation(wait_until="networkidle", timeout=60000),
-                page.locator('input[value="Acessar Portal"]').click()
-            )
+            print("[WORKER] 🔑 Realizando login...")
+            # Em vez de wait_for_navigation, clicamos e aguardamos o seletor da página interna
+            await page.locator('input[value="Acessar Portal"]').click()
+            
+            # Espera um elemento que só existe APÓS o login (Menu ou Saldo)
+            await page.wait_for_selector("span.textoCredit", state="visible", timeout=60000)
 
             # 2. EXTRAÇÃO DO SALDO
-            await page.wait_for_timeout(5000) 
-            saldo_selector = "span.textoCredit"
-            await page.wait_for_selector(saldo_selector, state="visible", timeout=45000)
-            saldo_raw = await page.locator(saldo_selector).first.inner_text()
+            print("[WORKER] 💰 Extraindo Saldo...")
+            saldo_raw = await page.locator("span.textoCredit").first.inner_text()
             saldo_final = formatar_valor_voip(saldo_raw)
+            print(f"[WORKER] ✅ Saldo extraído: {saldo_final}")
 
             # 3. NAVEGAÇÃO E CONSUMO
+            print("[WORKER] 📂 Gerando Relatório de Consumo...")
             await page.locator('//*[@id="iconfrmMenu:j_id50"]').click()
             await page.wait_for_load_state("networkidle")
+            
             await page.locator('input[value="Gerar Relatório"]').click()
             
+            # XPath do rodapé validado localmente
             consumo_xpath = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
+            
             await page.wait_for_selector(f"xpath={consumo_xpath}", state="visible", timeout=60000)
-            await asyncio.sleep(3) 
+            await asyncio.sleep(4) # Pausa técnica SipPulse
 
             consumo_raw = await page.locator(f"xpath={consumo_xpath}").inner_text()
             custo_diario = formatar_valor_voip(consumo_raw)
+            print(f"[WORKER] ✅ Consumo diário: {custo_diario}")
 
             # LÓGICA REDIS
             hoje_str = datetime.now().strftime('%Y-%m-%d')
@@ -110,6 +118,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
         if browser: await browser.close()
 
 async def enviar_para_api(dados: Dict[str, Any]):
+    """Envia dados para o Gateway."""
     print(f"[WORKER-API] 📡 Enviando para Gateway...")
     async with httpx.AsyncClient() as client:
         try:
@@ -125,6 +134,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+
 
 
 
