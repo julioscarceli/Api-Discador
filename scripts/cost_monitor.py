@@ -30,7 +30,7 @@ def formatar_valor_voip(texto):
     except: return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Prepara os dados no formato R$ 0,00 para o front-end."""
+    """Formata os dados para exibição no Dashboard (R$ 0,00)."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
@@ -125,6 +125,7 @@ if __name__ == '__main__':
         asyncio.run(enviar_para_api(dados_brutos)) 
         fmt = processar_dados_para_dashboard_formatado(dados_brutos)
         print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
+
 
 
 
