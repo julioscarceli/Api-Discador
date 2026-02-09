@@ -155,8 +155,8 @@ async def get_logs():
 @app.post("/api/worker/logs")
 async def receber_logs_worker(data: Dict[str, Any]):
     msg = data.get("message", "")
-    # O comando print com flush=True força o log a aparecer no painel do Railway
-    print(f"[LOCAL-STREAM] {msg}", flush=True) 
+    # Em vez de printar aqui, enviamos para o canal 'logs_financeiro' no Redis
+    r.publish("logs_financeiro", msg) 
     return {"status": "ok"}
 
 
@@ -165,6 +165,7 @@ if __name__ == "__main__":
     import uvicorn
     # Porta 8080 padrão para Railway
     uvicorn.run(app, host="0.0.0.0", port=8080)
+
 
 
 
