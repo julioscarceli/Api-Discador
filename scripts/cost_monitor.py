@@ -11,20 +11,20 @@ from playwright.async_api import async_playwright
 
 load_dotenv()
 
-# --- CONFIGURATIONS ---
+# --- CONFIGURAÇÕES ---
 URL_LOGIN = "http://187.60.56.102:8080/SipPulsePortal/pages/login/login.jsf"
 USUARIO = os.getenv("NEXT_ROUTER_USER", "99971111225@sip2.v01p.com.br")
 SENHA = os.getenv("NEXT_ROUTER_PASS", "jLEf2LMG8X9t8P7P")
 API_URL_INTERNA = "https://api-discador-production.up.railway.app/api/atualizar-custos"
 
-# Redis Configuration
+# Configuração do Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
-# --- SUPPORT & FORMATTING FUNCTIONS (REQUIRED BY API_SERVER) ---
+# --- FUNÇÕES DE APOIO E FORMATAÇÃO (EXIGIDAS PELO API_SERVER) ---
 
 def formatar_valor_voip(texto):
-    """Converts '12.021,25' to float 12021.25."""
+    """Formata '12.021,25' para float 12021.25."""
     if not texto: return 0.0
     try:
         limpo = texto.strip().replace('.', '').replace(',', '.')
@@ -33,7 +33,7 @@ def formatar_valor_voip(texto):
         return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Prepares raw data for the Dashboard display (Required by api_server.py)."""
+    """Prepara os dados para o Dashboard (Essencial para o api_server.py)."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
@@ -46,22 +46,22 @@ def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any
     }
 
 async def enviar_para_api(dados: Dict[str, Any]):
-    """Sends collected data to the API Gateway."""
-    print(f"[WORKER-API] 📡 Sending to Gateway...", flush=True)
+    """Envia os dados coletados para o Gateway central."""
+    print(f"[WORKER-API] 📡 Enviando para Gateway...", flush=True)
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
             print(f"✅ [WORKER-API] Status: {resp.status_code}", flush=True)
         except Exception as e:
-            print(f"❌ [WORKER-API] Connection failed: {e}", flush=True)
+            print(f"❌ [WORKER-API] Falha de conexão: {e}", flush=True)
 
-# --- SCRAPING ENGINE ---
+# --- MOTOR DE SCRAPING ---
 
 async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
-    """Scrapes SipPulse with high resilience for Railway environment."""
+    """Scraping SipPulse com alta resiliência e simulação humana."""
     browser = None
     try:
-        print(f"[WORKER] 🟢 Playwright started (Headless: {headless})...", flush=True)
+        print(f"[WORKER] 🟢 Playwright iniciado (Headless: {headless})...", flush=True)
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=headless, 
@@ -69,52 +69,49 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             )
             context = await browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
 
             # 1. LOGIN
-            print(f"[WORKER] 🌐 Accessing Portal...", flush=True)
+            print(f"[WORKER] 🌐 Acessando Portal...", flush=True)
             await page.goto(URL_LOGIN, wait_until="load", timeout=90000)
             await page.locator('input[id*="login"]').fill(USUARIO)
             await page.locator('input[id*="password"]').fill(SENHA)
-            
-            print("[WORKER] 🔑 Logging in...", flush=True)
             await page.locator('input[value="Acessar Portal"]').click()
             
-            # Wait for JSF Dashboard to stabilize
+            # Pausa para estabilização do Dashboard JSF no Railway
             await page.wait_for_load_state("networkidle", timeout=60000)
             await page.wait_for_timeout(15000) 
 
-            # 2. BALANCE EXTRACTION
-            print("[WORKER] 💰 Extracting Balance...", flush=True)
-            # Use JS Evaluation to bypass visibility issues in headless mode
+            # 2. SALDO (CAPTURA VIA DOM PARA EVITAR TIMEOUT)
+            print("[WORKER] 💰 Extraindo Saldo...", flush=True)
             saldo_raw = await page.evaluate("() => document.querySelector('span.textoCredit')?.innerText")
             
             if not saldo_raw:
-                # Fallback to absolute XPath if JS eval fails
+                # Fallback para o XPath absoluto se o JS falhar
                 xpath_saldo = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/div/div/table/tbody/tr[1]/td[2]/span"
                 saldo_raw = await page.locator(f"xpath={xpath_saldo}").inner_text()
 
             saldo_final = formatar_valor_voip(saldo_raw)
-            print(f"✅ Balance Extracted: {saldo_final}", flush=True)
+            print(f"✅ Saldo Extraído: {saldo_final}", flush=True)
 
-            # 3. CONSUMPTION
-            print("[WORKER] 📂 Navigating to 'Chamadas Saintes'...", flush=True)
+            # 3. CONSUMO (NAVEGAÇÃO RELATÓRIO)
+            print("[WORKER] 📂 Gerando Relatório de Consumo...", flush=True)
             await page.get_by_text("Chamadas Saintes").click()
             await page.wait_for_load_state("networkidle")
             await page.locator('input[value="Gerar Relatório"]').click()
             
-            # XPath for footer total validated in local debug
+            # Seletor do Total validado localmente
             xpath_total = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
             await page.wait_for_selector(f"xpath={xpath_total}", state="attached", timeout=60000)
             await asyncio.sleep(5) 
             
             consumo_raw = await page.locator(f"xpath={xpath_total}").inner_text()
             custo_diario = formatar_valor_voip(consumo_raw)
-            print(f"✅ Consumption Extracted: {custo_diario}", flush=True)
+            print(f"✅ Consumo Extraído: {custo_diario}", flush=True)
 
-            # --- REDIS LOGIC: WEEKLY ACCUMULATED ---
+            # --- LÓGICA REDIS: HISTÓRICO SEMANAL ---
             hoje = datetime.now()
             hoje_str = hoje.strftime('%Y-%m-%d')
             r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200)
@@ -129,7 +126,26 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             return {
                 "saldo_atual": saldo_final,
                 "custo_diario_total": custo_diario,
-                "custo
+                "custo_semanal_acumulado": total_semanal 
+            }
+            
+    except Exception as e:
+        print(f"❌ Erro Crítico no Scraping: {e}", flush=True)
+        return {"erro": str(e)}
+    finally:
+        if browser: await browser.close()
+
+if __name__ == '__main__':
+    print(f"--- [WORKER START] {datetime.now().strftime('%d/%m %H:%M:%S')} ---", flush=True)
+    try:
+        dados_brutos = asyncio.run(coletar_custos_async(headless=True))
+        if not dados_brutos.get('erro'):
+            asyncio.run(enviar_para_api(dados_brutos)) 
+            fmt = processar_dados_para_dashboard_formatado(dados_brutos)
+            print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---", flush=True)
+    except Exception as e:
+        print(f"❌ Falha fatal no monitor: {e}", flush=True)
+
 
 
 
