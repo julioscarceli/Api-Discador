@@ -23,6 +23,7 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 # --- FUNÇÕES DE APOIO ---
 
 def formatar_valor_voip(texto):
+    """Formata valores como '12.021,25' para float 12021.25."""
     if not texto: return 0.0
     try:
         limpo = texto.strip().replace('.', '').replace(',', '.')
@@ -30,6 +31,7 @@ def formatar_valor_voip(texto):
     except: return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Formata para exibição no front-end."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
@@ -56,6 +58,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
             )
             context = await browser.new_context(
+                viewport={'width': 1280, 'height': 800},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
@@ -69,37 +72,48 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             print("[WORKER] 🔑 Realizando login...", flush=True)
             await page.locator('input[value="Acessar Portal"]').click()
             
-            # 2. CAPTURA DO SALDO (ESTRATÉGIA AGRESSIVA)
+            # 2. CAPTURA DO SALDO (ESTRATÉGIA BASEADA NO PRINT)
             print("[WORKER] 💰 Localizando Saldo...", flush=True)
-            # Esperamos a página carregar o básico
+            # Networkidle é essencial para esperar o preenchimento da tabela
             await page.wait_for_load_state("networkidle", timeout=60000)
             
-            # Forçamos o JS a nos entregar o texto do saldo, mesmo que o seletor esteja "invisível"
-            saldo_raw = await page.evaluate("""() => {
-                const el = document.querySelector('span.textoCredit');
-                return el ? el.innerText : null;
-            }""")
+            # Segundo o print, o saldo está em uma tabela. Vamos buscar o texto "Créditos:"
+            saldo_raw = ""
+            try:
+                # Localizamos a célula que vem logo após o texto "Créditos:"
+                # O SipPulse usa tabelas JSF onde o valor fica em um span ou td vizinho
+                await page.wait_for_selector("text=Créditos:", state="visible", timeout=30000)
+                
+                # Extração via JavaScript para garantir que pegamos o valor numérico ao lado do label
+                saldo_raw = await page.evaluate("""() => {
+                    const labels = Array.from(document.querySelectorAll('td, span, label'));
+                    const creditLabel = labels.find(el => el.innerText.includes('Créditos:'));
+                    if (creditLabel) {
+                        // Tenta pegar o próximo elemento ou o texto numérico na mesma linha
+                        return creditLabel.parentElement.innerText.replace('Créditos:', '').trim();
+                    }
+                    return document.querySelector('.textoCredit')?.innerText || '';
+                }""")
+            except:
+                print("[WORKER] ⚠️ Fallback visual...", flush=True)
+                saldo_raw = await page.locator("span.textoCredit").first.inner_text()
 
-            # Se falhou, esperamos mais 5 segundos e tentamos de novo
-            if not saldo_raw:
-                print("[WORKER] ⏳ Saldo não veio de primeira, aguardando renderização...", flush=True)
-                await page.wait_for_timeout(10000)
-                saldo_raw = await page.evaluate("() => document.querySelector('span.textoCredit')?.innerText")
-
-            if not saldo_raw:
-                raise Exception("Não foi possível extrair o saldo via DOM.")
+            if not saldo_raw or "," not in saldo_raw:
+                raise Exception(f"Saldo inválido capturado: {saldo_raw}")
 
             saldo_final = formatar_valor_voip(saldo_raw)
             print(f"✅ Saldo Extraído: {saldo_final}", flush=True)
 
-            # 3. CONSUMO
+            # 3. NAVEGAÇÃO PARA RELATÓRIO (Chamadas Saintes)
             print("[WORKER] 📂 Navegando para 'Chamadas Saintes'...", flush=True)
             await page.get_by_text("Chamadas Saintes").click()
             await page.wait_for_load_state("networkidle")
+            
+            print("[WORKER] 📊 Gerando Relatório...", flush=True)
             await page.locator('input[value="Gerar Relatório"]').click()
             
+            # XPath validado no seu debug local
             xpath_total = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
-            # Esperamos o elemento ser anexado ao HTML, sem exigir que esteja "visível"
             await page.wait_for_selector(f"xpath={xpath_total}", state="attached", timeout=60000)
             await asyncio.sleep(5) 
             
@@ -136,6 +150,7 @@ if __name__ == '__main__':
             print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---", flush=True)
     except Exception as e:
         print(f"❌ Falha fatal: {e}", flush=True)
+
 
 
 
