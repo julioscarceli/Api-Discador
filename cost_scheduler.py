@@ -1,49 +1,40 @@
-# cost_scheduler.py (VERSÃO CORRIGIDA)
+# cost_scheduler.py
 import time
 import subprocess
 import sys
 from datetime import datetime
 
-# Intervalo de 30 minutos em segundos
 INTERVALO_VERIFICACAO = 1800 
 
 def should_run_now():
     now = datetime.utcnow()
-    if now.weekday() >= 5:
-        return False
     # Janela 10h-18h Brasília (13h-21h UTC)
-    if 13 <= now.hour < 21:
-        return True
-    return False
+    return now.weekday() < 5 and 13 <= now.hour < 21
 
 def run_worker():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Disparando processo de coleta...", flush=True)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Iniciando coleta...", flush=True)
     try:
-        # O parâmetro -u força o log a aparecer sem delay no Railway
+        # O -u é CRUCIAL para o log aparecer no Railway
         subprocess.run(
             [sys.executable, "-u", "scripts/cost_monitor.py"], 
-            capture_output=False, 
-            text=True,
-            check=True
+            check=True,
+            bufsize=0 
         )
     except Exception as e:
-        print(f"❌ Erro no scheduler: {e}", flush=True)
+        print(f"❌ Erro no processo filho: {e}", flush=True)
 
 if __name__ == "__main__":
-    print("Agendador de Custos Iniciado...", flush=True)
-    
-    # Executa uma vez ao iniciar
+    print("--- Agendador de Custos Iniciado ---", flush=True)
     run_worker() 
 
     while True:
         if should_run_now():
             run_worker()
-            print(f"💤 Aguardando 30 minutos...", flush=True)
+            print(f"💤 Aguardando 30 min...", flush=True)
             time.sleep(INTERVALO_VERIFICACAO)
         else:
-            hora_brt = (datetime.utcnow().hour - 3) % 24
-            print(f"[{hora_brt:02d}:{datetime.utcnow().minute:02d}] Fora do horário comercial. Dormindo...", flush=True)
             time.sleep(600)
+
 
 
 
