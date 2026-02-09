@@ -17,8 +17,26 @@ def iniciar_receptor():
             # Isso fará o log aparecer na aba 'Deploy Logs' do CUSTOS-MONITOR!
             print(f"[PC-LOCAL] {message['data']}", flush=True)
 
+
+def processar_dados_para_dashboard_formatado(dados):
+    """Restaura a função necessária para a API carregar o Dashboard."""
+    try:
+        saldo = dados.get("saldo_atual", 0.0)
+        custo_diario = dados.get("custo_diario_total", 0.0)
+        
+        return {
+            "saldo_atual": f"R$ {saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            "custo_diario": f"R$ {custo_diario:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            "custo_semanal": "R$ 0,00",
+            "data_coleta": dados.get("data_coleta", "")
+        }
+    except Exception as e:
+        return {"erro": str(e)}
+        
+
 if __name__ == "__main__":
     iniciar_receptor()
+
 
 
 
