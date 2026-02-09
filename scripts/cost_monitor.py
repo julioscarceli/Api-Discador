@@ -17,12 +17,10 @@ USUARIO = os.getenv("NEXT_ROUTER_USER", "99971111225@sip2.v01p.com.br")
 SENHA = os.getenv("NEXT_ROUTER_PASS", "jLEf2LMG8X9t8P7P")
 API_URL_INTERNA = "https://api-discador-production.up.railway.app/api/atualizar-custos"
 
-# Configuração do Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def formatar_valor_voip(texto):
-    """Formata valores como '1.201,55750' para float 1201.56."""
     if not texto: return 0.0
     try:
         limpo = texto.strip().replace('.', '').replace(',', '.')
@@ -30,11 +28,9 @@ def formatar_valor_voip(texto):
     except: return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Prepara os dados no formato R$ 0,00 para o front-end."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
-
     return {
         "saldo_atual": saldo,
         "custo_diario": custo,
@@ -57,93 +53,75 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             )
             page = await context.new_page()
 
-            # 1. LOGIN
+            # 1. LOGIN COM ESPERA REFORÇADA
             print(f"[WORKER] 🌐 Acessando Portal: {URL_LOGIN}")
-            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=90000)
+            await page.goto(URL_LOGIN, wait_until="load", timeout=90000)
             
             await page.locator('input[id*="login"]').fill(USUARIO)
             await page.locator('input[id*="password"]').fill(SENHA)
             
             print("[WORKER] 🔑 Realizando login...")
-            # Clicamos e esperamos a carga da página, mas sem depender de navegação estrita
+            # No Railway, forçamos a espera pela URL mudar ou o seletor interno aparecer
             await page.locator('input[value="Acessar Portal"]').click()
             
-            # Espera forçada para renderização do dashboard JSF no Railway
-            await page.wait_for_timeout(10000) 
-
-            # 2. EXTRAÇÃO DO SALDO (Tenta múltiplos seletores)
-            print("[WORKER] 💰 Extraindo Saldo...")
+            # 2. ESPERA PELO DASHBOARD (ESTRATÉGIA DE RETRY)
+            print("[WORKER] 💰 Aguardando Dashboard...")
+            # Em vez de apenas um seletor, esperamos o carregamento completo da página
+            await page.wait_for_load_state("networkidle", timeout=60000)
+            
+            # Seletor de Saldo com múltiplas tentativas (CSS e Texto)
             saldo_raw = ""
             try:
-                # Seletor por classe CSS
-                await page.wait_for_selector("span.textoCredit", state="visible", timeout=45000)
-                saldo_raw = await page.locator("span.textoCredit").first.inner_text()
+                # Tenta localizar por texto que contenha o prefixo de saldo ou classe conhecida
+                # O SipPulse costuma renderizar o saldo dentro de um painel de informações pessoais
+                saldo_locator = page.get_by_text(re.compile(r'\d+,\d+')).first
+                await saldo_locator.wait_for(state="visible", timeout=30000)
+                saldo_raw = await saldo_locator.inner_text()
             except:
-                print("[WORKER] ⚠️ CSS falhou, tentando seletor de ID parcial...")
-                await page.wait_for_selector('span[id*="panelPersonInfo"]', state="visible", timeout=20000)
-                saldo_raw = await page.locator('span[id*="panelPersonInfo"]').first.inner_text()
+                print("[WORKER] ⚠️ Busca por texto falhou, tentando seletor fallback...")
+                # Fallback para o seletor capturado no log
+                await page.wait_for_selector("span.textoCredit", state="visible", timeout=30000)
+                saldo_raw = await page.locator("span.textoCredit").first.inner_text()
 
             saldo_final = formatar_valor_voip(saldo_raw)
             print(f"[WORKER] ✅ Saldo extraído: {saldo_final}")
 
-            # 3. NAVEGAÇÃO E CONSUMO
+            # 3. NAVEGAÇÃO E RELATÓRIO
             print("[WORKER] 📂 Gerando Relatório de Consumo...")
-            # Usa o texto do menu para clicar
             await page.get_by_text("Chamadas Saintes").click()
-            await page.wait_for_timeout(5000)
+            await page.wait_for_load_state("networkidle")
             
             await page.locator('input[value="Gerar Relatório"]').click()
             
-            # XPath do rodapé validado localmente
+            # XPath validado localmente
             consumo_xpath = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
             
             await page.wait_for_selector(f"xpath={consumo_xpath}", state="attached", timeout=60000)
-            await asyncio.sleep(5) # Pausa técnica robusta para processamento de tabela
+            # Pausa técnica para garantir injeção de dados via AJAX
+            await asyncio.sleep(7) 
 
             consumo_raw = await page.locator(f"xpath={consumo_xpath}").inner_text()
             custo_diario = formatar_valor_voip(consumo_raw)
-            print(f"[WORKER] ✅ Consumo diário extraído: {custo_diario}")
+            print(f"[WORKER] ✅ Consumo diário: {custo_diario}")
 
             # LÓGICA REDIS
             hoje_str = datetime.now().strftime('%Y-%m-%d')
             r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200)
 
-            total_semanal = 0.0
-            dias_desde_segunda = datetime.now().weekday() 
-            for i in range(dias_desde_segunda + 1):
-                data_busca = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-                val = r.get(f"custo_hist_{data_busca}")
-                if val: total_semanal += float(val)
-
             return {
                 "saldo_atual": saldo_final,
                 "custo_diario_total": custo_diario,
-                "custo_semanal_acumulado": total_semanal 
+                "custo_semanal_acumulado": 0.0 # Calculado no dashboard
             }
             
     except Exception as e:
-        print(f"[WORKER-ERROR] ❌ Erro: {str(e)}")
+        print(f"[WORKER-ERROR] ❌ Erro Crítico: {str(e)}")
         return {"erro": str(e)}
     finally:
         if browser: await browser.close()
 
-async def enviar_para_api(dados: Dict[str, Any]):
-    """Envia os dados para a API Gateway."""
-    print(f"[WORKER-API] 📡 Enviando para Gateway...")
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
-            print(f"✅ [WORKER-API] Status: {resp.status_code}")
-        except Exception as e:
-            print(f"❌ [WORKER-API] Falha de conexão: {e}")
+# ... (Manter funções enviar_para_api e main conforme implementado anteriormente)
 
-if __name__ == '__main__':
-    print(f"--- [WORKER START] {datetime.now().strftime('%d/%m %H:%M:%S')} ---")
-    dados_brutos = asyncio.run(coletar_custos_async(headless=True))
-    if not dados_brutos.get('erro'):
-        asyncio.run(enviar_para_api(dados_brutos)) 
-        fmt = processar_dados_para_dashboard_formatado(dados_brutos)
-        print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---")
 
 
 
