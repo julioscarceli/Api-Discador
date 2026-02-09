@@ -1,5 +1,4 @@
-# cost_scheduler.py (ATUALIZADO PARA FUSO HORÁRIO BRASÍLIA)
-
+# cost_scheduler.py (VERSÃO CORRIGIDA)
 import time
 import subprocess
 import sys
@@ -9,54 +8,43 @@ from datetime import datetime
 INTERVALO_VERIFICACAO = 1800 
 
 def should_run_now():
-    """
-    Verifica se o horário atual (em UTC) corresponde à janela 
-    das 10:00 às 18:00 de Brasília (UTC-3).
-    """
-    now = datetime.utcnow() # Usamos UTC explicitamente para evitar confusão
-    
-    # 1. Dia da semana (Segunda a Sexta)
+    now = datetime.utcnow()
     if now.weekday() >= 5:
         return False
-        
-    # 2. Janela de Horário:
-    # 10:00 BRT -> 13:00 UTC
-    # 18:00 BRT -> 21:00 UTC
-    hora_utc = now.hour
-    
-    if 13 <= hora_utc < 21:
+    # Janela 10h-18h Brasília (13h-21h UTC)
+    if 13 <= now.hour < 21:
         return True
-        
     return False
 
 def run_worker():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Disparando processo de coleta...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Disparando processo de coleta...", flush=True)
     try:
-        # Mudança: Usar unbuffer para forçar o log a aparecer no Railway em tempo real
-        result = subprocess.run(
+        # O parâmetro -u força o log a aparecer sem delay no Railway
+        subprocess.run(
             [sys.executable, "-u", "scripts/cost_monitor.py"], 
-            capture_output=False, # Deixa o output ir direto para o log do Railway
+            capture_output=False, 
             text=True,
             check=True
         )
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Erro ao disparar o script: {e}")
     except Exception as e:
-        print(f"❌ Erro inesperado no scheduler: {e}")
+        print(f"❌ Erro no scheduler: {e}", flush=True)
+
+if __name__ == "__main__":
+    print("Agendador de Custos Iniciado...", flush=True)
     
-    # Execução inicial para popular o dashboard
+    # Executa uma vez ao iniciar
     run_worker() 
 
     while True:
         if should_run_now():
             run_worker()
-            print(f"💤 Aguardando 30 minutos...")
+            print(f"💤 Aguardando 30 minutos...", flush=True)
             time.sleep(INTERVALO_VERIFICACAO)
         else:
-            # Cálculo apenas para exibição no log de Brasília
             hora_brt = (datetime.utcnow().hour - 3) % 24
-            print(f"[{hora_brt:02d}:{datetime.utcnow().minute:02d}] Fora do horário comercial. Dormindo...")
-            time.sleep(600) # Checa a cada 10 min
+            print(f"[{hora_brt:02d}:{datetime.utcnow().minute:02d}] Fora do horário comercial. Dormindo...", flush=True)
+            time.sleep(600)
+
 
 
 
