@@ -33,7 +33,7 @@ def formatar_valor_voip(texto):
         return 0.0
 
 def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Prepara os dados para o Dashboard (Essencial para o api_server.py)."""
+    """Prepara os dados para o Dashboard."""
     saldo = f"R$ {d.get('saldo_atual', 0):.2f}".replace('.', ',')
     custo = f"R$ {d.get('custo_diario_total', 0):.2f}".replace('.', ',')
     custo_semanal = f"R$ {d.get('custo_semanal_acumulado', 0):.2f}".replace('.', ',')
@@ -46,19 +46,19 @@ def processar_dados_para_dashboard_formatado(d: Dict[str, Any]) -> Dict[str, Any
     }
 
 async def enviar_para_api(dados: Dict[str, Any]):
-    """Envia os dados coletados para o Gateway central."""
+    """Envia os dados coletados para o Gateway."""
     print(f"[WORKER-API] 📡 Enviando para Gateway...", flush=True)
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(API_URL_INTERNA, json=dados, timeout=20.0)
             print(f"✅ [WORKER-API] Status: {resp.status_code}", flush=True)
         except Exception as e:
-            print(f"❌ [WORKER-API] Falha de conexão: {e}", flush=True)
+            print(f"❌ [WORKER-API] Falha: {e}", flush=True)
 
 # --- MOTOR DE SCRAPING ---
 
 async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
-    """Scraping SipPulse com alta resiliência e simulação humana."""
+    """Scraping SipPulse com foco em estabilidade no Railway."""
     browser = None
     try:
         print(f"[WORKER] 🟢 Playwright iniciado (Headless: {headless})...", flush=True)
@@ -80,17 +80,21 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.locator('input[id*="password"]').fill(SENHA)
             await page.locator('input[value="Acessar Portal"]').click()
             
-            # Pausa para estabilização do Dashboard JSF no Railway
+            # ESPERA CRÍTICA: Aguarda a rede ficar ociosa e dá tempo para o AJAX injetar o saldo
+            print("[WORKER] 🔑 Realizando login e aguardando renderização...", flush=True)
             await page.wait_for_load_state("networkidle", timeout=60000)
-            await page.wait_for_timeout(15000) 
+            await page.wait_for_timeout(10000) 
 
-            # 2. SALDO (CAPTURA VIA DOM PARA EVITAR TIMEOUT)
+            # 2. EXTRAÇÃO DO SALDO (VIA DOM PARA EVITAR TIMEOUT DE LOCALIZADOR)
             print("[WORKER] 💰 Extraindo Saldo...", flush=True)
+            # Tentamos capturar via JavaScript direto no navegador
             saldo_raw = await page.evaluate("() => document.querySelector('span.textoCredit')?.innerText")
             
             if not saldo_raw:
-                # Fallback para o XPath absoluto se o JS falhar
+                print("[WORKER] ⚠️ JS direto falhou, tentando seletor XPath absoluto...", flush=True)
                 xpath_saldo = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/div/div/table/tbody/tr[1]/td[2]/span"
+                # Usamos attached para ler o valor mesmo que o portal ainda esteja carregando imagens
+                await page.wait_for_selector(f"xpath={xpath_saldo}", state="attached", timeout=30000)
                 saldo_raw = await page.locator(f"xpath={xpath_saldo}").inner_text()
 
             saldo_final = formatar_valor_voip(saldo_raw)
@@ -102,7 +106,7 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             await page.wait_for_load_state("networkidle")
             await page.locator('input[value="Gerar Relatório"]').click()
             
-            # Seletor do Total validado localmente
+            # XPath validado no seu debug local
             xpath_total = "/html/body/table/tbody/tr[4]/td/table/tbody/tr/td[2]/form/table/tbody/tr[2]/td/table/tbody/tr/td/table[2]/tfoot/tr/td[3]"
             await page.wait_for_selector(f"xpath={xpath_total}", state="attached", timeout=60000)
             await asyncio.sleep(5) 
@@ -112,14 +116,13 @@ async def coletar_custos_async(headless: bool = True) -> Dict[str, Any]:
             print(f"✅ Consumo Extraído: {custo_diario}", flush=True)
 
             # --- LÓGICA REDIS: HISTÓRICO SEMANAL ---
-            hoje = datetime.now()
-            hoje_str = hoje.strftime('%Y-%m-%d')
+            hoje_str = datetime.now().strftime('%Y-%m-%d')
             r.set(f"custo_hist_{hoje_str}", str(custo_diario), ex=691200)
 
             total_semanal = 0.0
-            dias_desde_segunda = hoje.weekday() 
+            dias_desde_segunda = datetime.now().weekday() 
             for i in range(dias_desde_segunda + 1):
-                data_busca = (hoje - timedelta(days=i)).strftime('%Y-%m-%d')
+                data_busca = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
                 val = r.get(f"custo_hist_{data_busca}")
                 if val: total_semanal += float(val)
 
@@ -145,6 +148,7 @@ if __name__ == '__main__':
             print(f"--- [FINISH] Saldo: {fmt['saldo_atual']} | Diário: {fmt['custo_diario']} ---", flush=True)
     except Exception as e:
         print(f"❌ Falha fatal no monitor: {e}", flush=True)
+
 
 
 
