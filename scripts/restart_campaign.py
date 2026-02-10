@@ -19,6 +19,7 @@ URL_DA_MG = "http://186.194.50.155/azcall/pages/da.php"
 SELETOR_TAB_ENVIAR = 'a[data-toggle="tab"]:has-text("Enviar")'
 SELETOR_BOTAO_FINALIZAR = 'button.btParar'
 SELETOR_CONFIRMAR_FINALIZAR = 'button.swal2-confirm'
+SELETOR_AGRESSIVIDADE_BOTAO = '#Agressive > div > label > span.toggle'
 
 async def select_dropdown_option_forced(page, button_xpath, text_to_find, server_label, is_telefone=False):
     """Sincronização reforçada para garantir seleção em Headless."""
@@ -165,7 +166,10 @@ async def restart_campaign(server: str):
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[2]/div/div/button', current_campaign, server)
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/button', current_campaign, server, is_telefone=True)
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[6]/div/div[1]/button', fila_name, server)
-
+            # Aguarda o seletor aparecer e clica
+            await page.wait_for_selector(SELETOR_AGRESSIVIDADE_BOTAO)
+            await page.click(SELETOR_AGRESSIVIDADE_BOTAO)
+            
             # --- DISPARO ---
             await page.locator("#saida").fill(SAIDAS_VALOR)
             await page.wait_for_timeout(1000)
@@ -189,6 +193,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
