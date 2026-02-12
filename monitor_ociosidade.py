@@ -5,11 +5,14 @@ import redis
 from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
-from config.settings import URL_FILAS_SP
+from config.settings import LOGIN_URL_SP  # Importando apenas o que existe no settings.py
 
 # Conexão Redis usando a URL do seu Railway
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
+
+# Construção dinâmica da URL de Filas para evitar erro de importação
+URL_FILAS_SP = LOGIN_URL_SP.replace("login.php", "filas.php")
 
 def is_horario_pico():
     """Regra: 14:40 às 16:30 -> 38 canais fixos."""
@@ -30,15 +33,17 @@ async def run_monitor():
     async with async_playwright() as p:
         print(f"🚀 Sensor Ativado | Escada: 36->32->26 | Headless: {os.getenv('HEADLESS_MODE', 'True')}")
         
-        # 🔑 Login Unificado via LoginManager
+        # 🔑 Login Unificado via LoginManager (Melhoria: Usa sua função padrão)
         context, page, browser = await create_context_and_login(p, server="SP")
-        if not context: return
+        if not context: 
+            print("❌ Falha no login inicial. Abortando monitor.")
+            return
 
         try:
-            # Navegação para a Fila SP
-            await page.goto("https://186.194.50.149/azcall/pages/filas.php")
+            # Navegação para a Fila SP usando a URL construída dinamicamente
+            await page.goto(URL_FILAS_SP)
             
-            # Clique forçado para evitar interceptação do menu superior
+            # Melhoria: Clique forçado via JS para evitar interceptação de menus superiores
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
             await btn_fila.wait_for(state="attached", timeout=15000)
             await btn_fila.dispatch_event("click") 
@@ -46,7 +51,7 @@ async def run_monitor():
             while True:
                 now = datetime.datetime.now().strftime('%H:%M:%S')
 
-                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Bloqueia se o Restarter estiver ativo)
+                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Evita conflito com o main.py/restarter)
                 if r.get("lock_restart_sp") == "active":
                     print(f"🚧 [{now}] BLOQUEIO: Restarter operando no SP. Aguardando 20s...")
                     await asyncio.sleep(20)
@@ -56,10 +61,13 @@ async def run_monitor():
                     if canal_atual != "38":
                         if await acao_ajustar_potencia(valor="38", server="SP"): 
                             canal_atual = "38"; ciclos_estaveis = 0; pausa_estabilizacao = 2
+                    else:
+                        print(f"🟢 [{now}] Pico Ativo: Mantendo 38 canais.")
                     await asyncio.sleep(20)
                 else:
+                    # Melhoria: Pausa de Estabilização (2 ciclos após ações críticas)
                     if pausa_estabilizacao > 0:
-                        print(f"⏳ [{now}] Aguardando estabilização ({pausa_estabilizacao}/2)...")
+                        print(f"⏳ [{now}] Aguardando estabilização do sistema ({pausa_estabilizacao}/2)...")
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
@@ -74,17 +82,19 @@ async def run_monitor():
                         if len(col) >= 7 and "LIVRE" in col[3].upper():
                             if time_to_seconds(col[6].strip()) >= 60: ociosos_criticos += 1
 
+                    # Melhoria: Escada 36 -> 32 -> 26 com 20 ciclos de espera
                     if ociosos_criticos >= 3:
-                        print(f"🔴 CRÍTICO: Ajustando para 36...")
+                        print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Ajustando para 36...")
                         if await acao_ajustar_potencia(valor="36", server="SP"):
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 2
                     else:
                         ciclos_estaveis += 1
-                        # Escada de Descida com 20 ciclos de carência
                         if canal_atual == "36" and ciclos_estaveis >= 20:
+                            print("📉 Estabilidade atingida em 36. Descendo para 32...")
                             if await acao_ajustar_potencia(valor="32", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "32", 0, 1
                         elif canal_atual == "32" and ciclos_estaveis >= 20:
+                            print("📉 Estabilidade atingida em 32. Descendo para 26...")
                             if await acao_ajustar_potencia(valor="26", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "26", 0, 1
 
