@@ -1,14 +1,26 @@
-# monitor_ociosidade.py
 import asyncio
 import datetime
 import os
 import redis
+import sys
 from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
-from config.settings import URL_FILAS_SP # Agora o import funcionará com o settings atualizado
 
-# Conexão Redis usando a URL do seu Railway
+# 1. Tratamento de Importação para evitar Crash no Railway
+try:
+    from config.settings import LOGIN_URL_SP
+    # Tenta pegar a URL de filas, se não existir no settings, constrói dinamicamente
+    try:
+        from config.settings import URL_FILAS_SP
+    except ImportError:
+        URL_FILAS_SP = LOGIN_URL_SP.replace("login.php", "filas.php")
+except ImportError as e:
+    print(f"❌ Erro crítico de configuração: {e}", flush=True)
+    # Valores de fallback para o container não morrer e você ver o log
+    URL_FILAS_SP = "https://186.194.50.149/azcall/pages/filas.php"
+
+# 2. Conexão Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -29,64 +41,79 @@ async def run_monitor():
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 Monitor Ociosidade Ativado | Escada 36-32-26")
+        # flush=True força a exibição do log no Railway na hora
+        print(f"🚀 [SOMA] Sensor Ativado | Escada: 36->32->26 | Pico (14:40-16:30): 38 fixo", flush=True)
         
-        # 🔑 Login via LoginManager unificado
+        # 🔑 Login Unificado via LoginManager
         context, page, browser = await create_context_and_login(p, server="SP")
-        if not context: return
+        if not context: 
+            print("❌ Falha no login unificado. Verifique DISCADOR_USER/PASS nas Variables.", flush=True)
+            return
 
         try:
-            # Navegação para a Fila SP
+            # Navegação inicial
             await page.goto(URL_FILAS_SP)
             
-            # Clique forçado para evitar interceptação de menus
+            # Clique forçado via JS para ignorar menus sobrepostos
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
             await btn_fila.wait_for(state="attached", timeout=15000)
             await btn_fila.dispatch_event("click") 
+            print("✅ Acesso à aba de filas confirmado.", flush=True)
             
             while True:
                 now = datetime.datetime.now().strftime('%H:%M:%S')
 
-                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Evita conflito com o restarter no main.py)
+                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Bloqueia se o Restarter estiver ativo)
                 if r.get("lock_restart_sp") == "active":
-                    print(f"🚧 [{now}] BLOQUEIO: Restarter operando no SP. Aguardando 20s...")
+                    print(f"🚧 [{now}] BLOQUEIO REDIS: Restarter operando no SP. Aguardando...", flush=True)
                     await asyncio.sleep(20)
                     continue
 
                 if is_horario_pico():
                     if canal_atual != "38":
+                        print(f"⚡ [{now}] ENTRANDO EM HORÁRIO DE PICO: Ajustando para 38 fixo.", flush=True)
                         if await acao_ajustar_potencia(valor="38", server="SP"): 
                             canal_atual = "38"; ciclos_estaveis = 0; pausa_estabilizacao = 2
                     await asyncio.sleep(20)
                 else:
+                    # Pausa de Estabilização para evitar ações seguidas
                     if pausa_estabilizacao > 0:
-                        print(f"⏳ [{now}] Estabilizando sistema ({pausa_estabilizacao}/2)...")
+                        print(f"⏳ [{now}] Estabilizando sistema ({pausa_estabilizacao}/2)...", flush=True)
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
-                    print(f"--- Ciclo: {now} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis}/20 ---")
+                    print(f"--- Ciclo: {now} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis}/20 ---", flush=True)
                     
-                    await page.wait_for_selector("#Filas tbody tr", timeout=15000)
-                    linhas = await page.locator("#Filas tbody tr").all()
-                    ociosos_criticos = 0
+                    try:
+                        await page.wait_for_selector("#Filas tbody tr", timeout=15000)
+                        linhas = await page.locator("#Filas tbody tr").all()
+                        ociosos_criticos = 0
 
-                    for linha in linhas:
-                        col = await linha.locator("td").all_inner_texts()
-                        if len(col) >= 7 and "LIVRE" in col[3].upper():
-                            if time_to_seconds(col[6].strip()) >= 60: ociosos_criticos += 1
+                        for linha in linhas:
+                            col = await linha.locator("td").all_inner_texts()
+                            if len(col) >= 7 and "LIVRE" in col[3].upper():
+                                if time_to_seconds(col[6].strip()) >= 60: ociosos_criticos += 1
 
-                    if ociosos_criticos >= 3:
-                        print(f"🔴 CRÍTICO: Ajustando para 36...")
-                        if await acao_ajustar_potencia(valor="36", server="SP"):
-                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 2
-                    else:
-                        ciclos_estaveis += 1
-                        if canal_atual == "36" and ciclos_estaveis >= 20:
-                            if await acao_ajustar_potencia(valor="32", server="SP"):
-                                canal_atual, ciclos_estaveis, pausa_estabilizacao = "32", 0, 1
-                        elif canal_atual == "32" and ciclos_estaveis >= 20:
-                            if await acao_ajustar_potencia(valor="26", server="SP"):
-                                canal_atual, ciclos_estaveis, pausa_estabilizacao = "26", 0, 1
+                        if ociosos_criticos >= 3:
+                            print(f"🔴 CRÍTICO: {ociosos_criticos} ociosos. Subindo para 36!", flush=True)
+                            if await acao_ajustar_potencia(valor="36", server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 2
+                        else:
+                            ciclos_estaveis += 1
+                            # Escada de Descida com carência de 20 ciclos
+                            if canal_atual == "36" and ciclos_estaveis >= 20:
+                                print(f"📉 Estabilidade atingida em 36. Descendo para 32...", flush=True)
+                                if await acao_ajustar_potencia(valor="32", server="SP"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "32", 0, 1
+                            elif canal_atual == "32" and ciclos_estaveis >= 20:
+                                print(f"📉 Estabilidade atingida em 32. Descendo para 26...", flush=True)
+                                if await acao_ajustar_potencia(valor="26", server="SP"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "26", 0, 1
+                    
+                    except Exception as e_inner:
+                        print(f"⚠️ Erro na leitura da tabela: {e_inner}. Tentando reconectar...", flush=True)
+                        await page.reload()
+                        await asyncio.sleep(5)
 
                 await asyncio.sleep(10)
         finally:
