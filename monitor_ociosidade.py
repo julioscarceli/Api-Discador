@@ -1,3 +1,4 @@
+# monitor_ociosidade.py
 import asyncio
 import datetime
 import os
@@ -5,13 +6,14 @@ import redis
 from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
-from config.settings import URL_FILAS_SP # Agora o import funcionará
+from config.settings import URL_FILAS_SP # Agora o import funcionará com o settings atualizado
 
-# Conexão Redis compartilhada no Railway
+# Conexão Redis usando a URL do seu Railway
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def is_horario_pico():
+    """Regra: 14:40 às 16:30 -> 38 canais fixos."""
     agora = datetime.datetime.now().time()
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
@@ -22,44 +24,48 @@ def time_to_seconds(time_str):
     except: return 0
 
 async def run_monitor():
-    canal_atual, ciclos_estaveis, pausa_estabilizacao = "DESCONHECIDO", 0, 0
+    canal_atual = "DESCONHECIDO"
+    ciclos_estaveis = 0
+    pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 Monitor Iniciado | Escada: 36-32-26 | REDIS: Conectado")
+        print(f"🚀 Monitor Ociosidade Ativado | Escada 36-32-26")
         
-        # Inicia sessão unificada
+        # 🔑 Login via LoginManager unificado
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
 
         try:
-            # Navegação segura para a Fila
-            await page.goto(URL_FILAS_SP, wait_until="networkidle")
+            # Navegação para a Fila SP
+            await page.goto(URL_FILAS_SP)
             
-            # Clique forçado via JavaScript para evitar interceptação de menus
+            # Clique forçado para evitar interceptação de menus
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
             await btn_fila.wait_for(state="attached", timeout=15000)
             await btn_fila.dispatch_event("click") 
             
             while True:
-                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Bloqueia se o Restarter estiver em curso)
+                now = datetime.datetime.now().strftime('%H:%M:%S')
+
+                # 🛑 CHECAGEM DO SEMÁFORO REDIS (Evita conflito com o restarter no main.py)
                 if r.get("lock_restart_sp") == "active":
-                    print(f"🚧 BLOQUEIO: Restarter operando no SP. Aguardando...")
+                    print(f"🚧 [{now}] BLOQUEIO: Restarter operando no SP. Aguardando 20s...")
                     await asyncio.sleep(20)
                     continue
 
-                now = datetime.datetime.now().strftime('%H:%M:%S')
-
                 if is_horario_pico():
                     if canal_atual != "38":
-                        if await acao_ajustar_potencia(valor="38"): canal_atual = "38"
+                        if await acao_ajustar_potencia(valor="38", server="SP"): 
+                            canal_atual = "38"; ciclos_estaveis = 0; pausa_estabilizacao = 2
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
-                        print(f"⏳ Estabilizando sistema ({pausa_estabilizacao}/2)...")
+                        print(f"⏳ [{now}] Estabilizando sistema ({pausa_estabilizacao}/2)...")
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
                     print(f"--- Ciclo: {now} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis}/20 ---")
+                    
                     await page.wait_for_selector("#Filas tbody tr", timeout=15000)
                     linhas = await page.locator("#Filas tbody tr").all()
                     ociosos_criticos = 0
@@ -71,15 +77,15 @@ async def run_monitor():
 
                     if ociosos_criticos >= 3:
                         print(f"🔴 CRÍTICO: Ajustando para 36...")
-                        if await acao_ajustar_potencia(valor="36"):
+                        if await acao_ajustar_potencia(valor="36", server="SP"):
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 2
                     else:
                         ciclos_estaveis += 1
                         if canal_atual == "36" and ciclos_estaveis >= 20:
-                            if await acao_ajustar_potencia(valor="32"): 
+                            if await acao_ajustar_potencia(valor="32", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "32", 0, 1
                         elif canal_atual == "32" and ciclos_estaveis >= 20:
-                            if await acao_ajustar_potencia(valor="26"): 
+                            if await acao_ajustar_potencia(valor="26", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "26", 0, 1
 
                 await asyncio.sleep(10)
