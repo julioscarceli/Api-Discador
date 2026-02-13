@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
 
-# Configurações de Horário Comercial (Relógio de Brasília)
+# Configurações Brasília (09:30 - 18:30)
 START_HOUR, START_MINUTE = 9, 30
 END_HOUR, END_MINUTE = 18, 30
 
@@ -24,7 +24,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOx
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def get_now_sp():
-    """Retorna o horário atual ajustado para Brasília (UTC-3)."""
     return datetime.datetime.now() - datetime.timedelta(hours=3)
 
 def is_within_operating_hours() -> bool:
@@ -46,18 +45,22 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
-    # Inicia no fixo 40
-    canal_atual = "40" 
+    canal_atual = "DESCONHECIDO" # Inicia assim para forçar o primeiro ajuste
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Monitor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
+        print(f"🚀 [SOMA - SP] Sensor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
 
         try:
+            # Força o ajuste inicial para 40 logo no startup
+            print("⚙️ [STARTUP] Garantindo potência inicial em 40...", flush=True)
+            if await acao_ajustar_potencia(valor="40", server="SP"):
+                canal_atual = "40"
+
             await page.goto(URL_FILAS_SP)
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
             await btn_fila.wait_for(state="attached", timeout=15000)
@@ -75,37 +78,35 @@ async def run_monitor():
                     print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo.", flush=True)
                     await asyncio.sleep(20); continue
 
-                if is_horario_pico():
-                    # Pico ajustado para 40 conforme sua regra
-                    if canal_atual != "40":
-                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 40 fixo...", flush=True)
-                        if await acao_ajustar_potencia(valor="40", server="SP"): 
-                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
+                # --- LEITURA DE AGENTES (Sempre visível agora) ---
+                try:
+                    await page.wait_for_selector("#Filas tbody tr", timeout=15000)
+                    linhas = await page.locator("#Filas tbody tr").all()
+                    agentes_livres_logs = []
+                    ociosos_criticos = 0
+
+                    for linha in linhas:
+                        col = await linha.locator("td").all_inner_texts()
+                        if len(col) >= 7 and "LIVRE" in col[3].upper():
+                            nome, tempo = col[0].strip(), col[6].strip()
+                            agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
+                            if get_total_seconds(tempo) >= 60:
+                                ociosos_criticos += 1
+
+                    # Lógica de Exibição e Decisão
+                    if is_horario_pico():
+                        print(f"\n--- Ciclo SP (PICO): {now_str} | Mantendo 40 fixo ---", flush=True)
+                        for log in agentes_livres_logs: print(log, flush=True)
+                        if canal_atual != "40":
+                            if await acao_ajustar_potencia(valor="40", server="SP"): canal_atual = "40"
+                        await asyncio.sleep(20)
                     else:
-                        print(f"\n🟢 [PICO ATIVO] {now_str} | Mantendo 40 canais.", flush=True)
-                    await asyncio.sleep(20)
-                else:
-                    if pausa_estabilizacao > 0:
-                        print(f"⏳ [{now_str}] Aguardando estabilização ({pausa_estabilizacao}/2)...", flush=True)
-                        pausa_estabilizacao -= 1
-                        await asyncio.sleep(15); continue
+                        if pausa_estabilizacao > 0:
+                            print(f"⏳ [{now_str}] Aguardando estabilização ({pausa_estabilizacao}/2)...", flush=True)
+                            pausa_estabilizacao -= 1
+                            await asyncio.sleep(15); continue
 
-                    print(f"\n--- Ciclo SP: {now_str} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis}/20 ---", flush=True)
-                    
-                    try:
-                        await page.wait_for_selector("#Filas tbody tr", timeout=15000)
-                        linhas = await page.locator("#Filas tbody tr").all()
-                        agentes_livres_logs = []
-                        ociosos_criticos = 0
-
-                        for linha in linhas:
-                            col = await linha.locator("td").all_inner_texts()
-                            if len(col) >= 7 and "LIVRE" in col[3].upper():
-                                nome, tempo = col[0].strip(), col[6].strip()
-                                agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
-                                if get_total_seconds(tempo) >= 60:
-                                    ociosos_criticos += 1
-
+                        print(f"\n--- Ciclo SP: {now_str} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis}/20 ---", flush=True)
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
@@ -116,21 +117,15 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                            # Nova Escada SP: 38 -> 36 -> 28
+                            # ESCADA: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
-                                print("📉 Descendo para 38 canais...", flush=True)
-                                if await acao_ajustar_potencia(valor="38", server="SP"):
-                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "38", 0, 1
+                                if await acao_ajustar_potencia(valor="38", server="SP"): canal_atual, ciclos_estaveis, pausa_estabilizacao = "38", 0, 1
                             elif canal_atual == "38" and ciclos_estaveis >= 20:
-                                print("📉 Descendo para 36 canais...", flush=True)
-                                if await acao_ajustar_potencia(valor="36", server="SP"):
-                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
+                                if await acao_ajustar_potencia(valor="36", server="SP"): canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
                             elif canal_atual == "36" and ciclos_estaveis >= 20:
-                                print("📉 Descendo para 28 canais...", flush=True)
-                                if await acao_ajustar_potencia(valor="28", server="SP"):
-                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "28", 0, 1
-                    except:
-                        await page.reload(); await asyncio.sleep(5)
+                                if await acao_ajustar_potencia(valor="28", server="SP"): canal_atual, ciclos_estaveis, pausa_estabilizacao = "28", 0, 1
+                except:
+                    await page.reload(); await asyncio.sleep(5)
 
                 await asyncio.sleep(10)
         finally:
