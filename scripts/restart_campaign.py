@@ -10,7 +10,7 @@ from utils.login_manager import create_context_and_login, get_fila_name, get_ser
 DISCADOR_USER = os.getenv("DISCADOR_USER", "SOMA")
 DISCADOR_PASS = os.getenv("DISCADOR_PASS", "123456")
 HEADLESS = os.getenv("HEADLESS_MODE", "True").lower() == "true"
-SAIDAS_VALOR = "36"
+SAIDAS_VALOR = "40"
 
 URL_DA_SP = "https://186.194.50.149/azcall/pages/da.php"
 URL_DA_MG = "http://186.194.50.155/azcall/pages/da.php"
@@ -193,6 +193,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
