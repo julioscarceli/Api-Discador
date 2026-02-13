@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
 
-# Configurações de Horário (Igual ao seu main.py)
+# Configurações de Horário Comercial
 START_HOUR, START_MINUTE = 12, 30
 END_HOUR, END_MINUTE = 21, 30
 
@@ -25,21 +25,34 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def is_within_operating_hours() -> bool:
     now = datetime.datetime.now()
-    if now.weekday() >= 5: return False  # Sáb/Dom não roda
+    if now.weekday() >= 5: return False
     curr = now.hour * 60 + now.minute
     return (START_HOUR * 60 + START_MINUTE) <= curr <= (END_HOUR * 60 + END_MINUTE)
 
 def is_horario_pico():
     agora = datetime.datetime.now().time()
+    # Novo Horário de Pico: 14:40 às 16:30
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
+def get_total_seconds(tempo_str):
+    """Converte HH:MM:SS ou MM:SS em segundos totais para precisão absoluta."""
+    try:
+        partes = list(map(int, tempo_str.split(':')))
+        if len(partes) == 3: # HH:MM:SS
+            return partes[0] * 3600 + partes[1] * 60 + partes[2]
+        elif len(partes) == 2: # MM:SS
+            return partes[0] * 60 + partes[1]
+        return 0
+    except: return 0
+
 async def run_monitor():
-    canal_atual = "DESCONHECIDO"
+    # Inicializamos em 40 (topo da nova escada)
+    canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Monitor Iniciado com Trava de Horário Comercial.", flush=True)
+        print(f"🚀 [SOMA - SP] Monitor Ativado | Escada: 40->36->28 | Pico: 45 fixo", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
@@ -53,20 +66,20 @@ async def run_monitor():
             while True:
                 now_str = datetime.datetime.now().strftime('%H:%M:%S')
 
-                # 🛑 TRAVA DE HORÁRIO COMERCIAL
                 if not is_within_operating_hours():
-                    print(f"💤 [{now_str}] Fora do horário de expediente. Monitor SP em repouso...", flush=True)
-                    await asyncio.sleep(300) # Dorme 5 minutos antes de checar de novo
-                    continue
+                    print(f"💤 [{now_str}] Monitor SP em repouso...", flush=True)
+                    await asyncio.sleep(300); continue
 
                 if r.get("lock_restart_sp") == "active":
-                    print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter operando no SP.", flush=True)
+                    print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo.", flush=True)
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
-                    if canal_atual != "38":
-                        if await acao_ajustar_potencia(valor="38", server="SP"): 
-                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "38", 0, 2
+                    # Novo valor de Pico: 45
+                    if canal_atual != "45":
+                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Ajustando para 45 fixo...", flush=True)
+                        if await acao_ajustar_potencia(valor="45", server="SP"): 
+                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
@@ -85,20 +98,29 @@ async def run_monitor():
                             if len(col) >= 7 and "LIVRE" in col[3].upper():
                                 nome, tempo = col[0].strip(), col[6].strip()
                                 print(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}", flush=True)
-                                # Lógica de segundos simplificada aqui para brevidade
-                                if ":" in tempo and int(tempo.split(':')[-2]) >= 1: ociosos_criticos += 1
+                                
+                                # CRÍTICO: Se tiver 60 segundos ou mais (1 minuto)
+                                if get_total_seconds(tempo) >= 60:
+                                    ociosos_criticos += 1
 
                         if ociosos_criticos >= 3:
-                            if await acao_ajustar_potencia(valor="36", server="SP"):
-                                canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 2
+                            # Quando crítico, sobe para o degrau do meio (36) ou topo conforme sua regra
+                            print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Ajustando para 40!", flush=True)
+                            if await acao_ajustar_potencia(valor="40", server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
                         else:
                             ciclos_estaveis += 1
-                            if canal_atual == "36" and ciclos_estaveis >= 20:
-                                if await acao_ajustar_potencia(valor="32", server="SP"):
-                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "32", 0, 1
-                            elif canal_atual == "32" and ciclos_estaveis >= 20:
-                                if await acao_ajustar_potencia(valor="26", server="SP"):
-                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "26", 0, 1
+                            print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
+
+                            # NOVA ESCADA: 40 -> 36 -> 28
+                            if canal_atual == "40" and ciclos_estaveis >= 20:
+                                print("📉 Descendo para 36 canais...", flush=True)
+                                if await acao_ajustar_potencia(valor="36", server="SP"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
+                            elif canal_atual == "36" and ciclos_estaveis >= 20:
+                                print("📉 Descendo para 28 canais...", flush=True)
+                                if await acao_ajustar_potencia(valor="28", server="SP"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "28", 0, 1
                     except:
                         await page.reload(); await asyncio.sleep(5)
 
