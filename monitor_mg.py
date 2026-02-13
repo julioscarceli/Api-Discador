@@ -42,7 +42,6 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
-    # FIXO DEFINIDO: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
@@ -72,13 +71,12 @@ async def run_monitor():
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
-                    # PICO AJUSTADO PARA 40
                     if canal_atual != "40":
-                        print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 40...", flush=True)
+                        print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 40 fixo...", flush=True)
                         if await acao_ajustar_potencia(valor="40", server="MG"): 
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
                     else:
-                        print(f"\n🟢 [PICO ATIVO MG] {now_str} | Mantendo 40.")
+                        print(f"\n🟢 [PICO ATIVO MG] {now_str} | Mantendo 40 canais.")
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
@@ -105,7 +103,6 @@ async def run_monitor():
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
-                            # CRÍTICO AJUSTA PARA 40
                             print(f"🔴 CRÍTICO MG: {ociosos_criticos} ociosos. Ajustando para 40!", flush=True)
                             if await acao_ajustar_potencia(valor="40", server="MG"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
@@ -113,7 +110,7 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL MG: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                            # NOVA ESCADA MG: 38 -> 36 -> 28
+                            # Nova Escada MG: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
                                 print("📉 MG: Descendo para 38...", flush=True)
                                 if await acao_ajustar_potencia(valor="38", server="MG"):
