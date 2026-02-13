@@ -7,9 +7,9 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
 
-# Trava de Horário Comercial
-START_HOUR, START_MINUTE = 12, 30
-END_HOUR, END_MINUTE = 21, 30
+# Configurações Brasília
+START_HOUR, START_MINUTE = 9, 30
+END_HOUR, END_MINUTE = 18, 30
 
 try:
     from config.settings import LOGIN_URL_MG
@@ -20,14 +20,18 @@ except ImportError:
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
+def get_now_sp():
+    """Horário Brasília para o log e travas."""
+    return datetime.datetime.now() - datetime.timedelta(hours=3)
+
 def is_within_operating_hours() -> bool:
-    now = datetime.datetime.now()
+    now = get_now_sp()
     if now.weekday() >= 5: return False
     curr = now.hour * 60 + now.minute
     return (START_HOUR * 60 + START_MINUTE) <= curr <= (END_HOUR * 60 + END_MINUTE)
 
 def is_horario_pico():
-    agora = datetime.datetime.now().time()
+    agora = get_now_sp().time()
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
 def get_total_seconds(tempo_str):
@@ -44,7 +48,7 @@ async def run_monitor():
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - MG] Monitor Ativado | Escada: 40->36->28 | Pico: 45 fixo", flush=True)
+        print(f"🚀 [SOMA - MG] Monitor Ativado | Ajustado Horário Brasília", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="MG")
         if not context: return
@@ -56,7 +60,7 @@ async def run_monitor():
             await btn_fila.dispatch_event("click") 
             
             while True:
-                now_dt = datetime.datetime.now()
+                now_dt = get_now_sp()
                 now_str = now_dt.strftime('%H:%M:%S')
 
                 if not is_within_operating_hours():
@@ -64,20 +68,20 @@ async def run_monitor():
                     await asyncio.sleep(300); continue
 
                 if r.get("lock_restart_mg") == "active":
-                    print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo MG.", flush=True)
+                    print(f"🚧 [{now_str}] BLOQUEIO REDIS MG.", flush=True)
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
                     if canal_atual != "45":
-                        print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 45 canais...", flush=True)
+                        print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 45...", flush=True)
                         if await acao_ajustar_potencia(valor="45", server="MG"): 
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
                     else:
-                        print(f"\n🟢 [PICO ATIVO MG] {now_str} | Mantendo 45 canais.")
+                        print(f"\n🟢 [PICO ATIVO MG] {now_str} | Mantendo 45.")
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
-                        print(f"⏳ [{now_str}] MG: Aguardando estabilização do sistema ({pausa_estabilizacao}/2)...", flush=True)
+                        print(f"⏳ [{now_str}] MG: Estabilizando ({pausa_estabilizacao}/2)...", flush=True)
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
@@ -100,7 +104,7 @@ async def run_monitor():
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
-                            print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Ajustando para 40!", flush=True)
+                            print(f"🔴 CRÍTICO MG: {ociosos_criticos} ociosos. Ajustando para 40!", flush=True)
                             if await acao_ajustar_potencia(valor="40", server="MG"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
                         else:
@@ -108,11 +112,11 @@ async def run_monitor():
                             print(f"🟢 NORMAL MG: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
                             if canal_atual == "40" and ciclos_estaveis >= 20:
-                                print("📉 MG: Descendo para 36 canais...", flush=True)
+                                print("📉 MG: Descendo para 36...", flush=True)
                                 if await acao_ajustar_potencia(valor="36", server="MG"):
                                     canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
                             elif canal_atual == "36" and ciclos_estaveis >= 20:
-                                print("📉 MG: Descendo para 28 canais...", flush=True)
+                                print("📉 MG: Descendo para 28...", flush=True)
                                 if await acao_ajustar_potencia(valor="28", server="MG"):
                                     canal_atual, ciclos_estaveis, pausa_estabilizacao = "28", 0, 1
                     except:
