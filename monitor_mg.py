@@ -42,12 +42,13 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
+    # FIXO DEFINIDO: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - MG] Sensor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
+        print(f"🚀 [SOMA - MG] Monitor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="MG")
         if not context: return
@@ -71,6 +72,7 @@ async def run_monitor():
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
+                    # PICO AJUSTADO PARA 40
                     if canal_atual != "40":
                         print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 40...", flush=True)
                         if await acao_ajustar_potencia(valor="40", server="MG"): 
@@ -103,6 +105,7 @@ async def run_monitor():
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
+                            # CRÍTICO AJUSTA PARA 40
                             print(f"🔴 CRÍTICO MG: {ociosos_criticos} ociosos. Ajustando para 40!", flush=True)
                             if await acao_ajustar_potencia(valor="40", server="MG"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
@@ -110,6 +113,7 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL MG: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
+                            # NOVA ESCADA MG: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
                                 print("📉 MG: Descendo para 38...", flush=True)
                                 if await acao_ajustar_potencia(valor="38", server="MG"):
