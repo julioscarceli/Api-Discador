@@ -20,6 +20,7 @@ try:
 except ImportError:
     URL_FILAS_SP = "https://186.194.50.149/azcall/pages/filas.php"
 
+# Conexão Redis Railway
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -38,6 +39,7 @@ def is_horario_pico():
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
 def get_total_seconds(tempo_str):
+    """Converte HH:MM:SS ou MM:SS em segundos totais."""
     try:
         partes = list(map(int, tempo_str.split(':')))
         if len(partes) == 3: return partes[0] * 3600 + partes[1] * 60 + partes[2]
@@ -46,7 +48,7 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
-    # NOVO FIXO: 40
+    # Fixo inicial: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
@@ -76,10 +78,13 @@ async def run_monitor():
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
-                    if canal_atual != "45":
-                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 45 fixo...", flush=True)
-                        if await acao_ajustar_potencia(valor="45", server="SP"): 
-                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
+                    # Pico ajustado para 40 para evitar erro de dropdown
+                    if canal_atual != "40":
+                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 40 fixo...", flush=True)
+                        if await acao_ajustar_potencia(valor="40", server="SP"): 
+                            canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
+                    else:
+                        print(f"\n🟢 [PICO ATIVO] {now_str} | Mantendo 40 canais.", flush=True)
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
@@ -100,13 +105,12 @@ async def run_monitor():
                             if len(col) >= 7 and "LIVRE" in col[3].upper():
                                 nome, tempo = col[0].strip(), col[6].strip()
                                 agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
-                                if get_total_seconds(tempo) >= 60:
+                                if get_total_seconds(tempo) >= 60: # 1 minuto
                                     ociosos_criticos += 1
 
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
-                            # SE CRÍTICO -> VOLTA PARA O FIXO 40
                             print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Ajustando para 40!", flush=True)
                             if await acao_ajustar_potencia(valor="40", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
@@ -114,7 +118,7 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                            # NOVA ESCADA: 38 -> 36 -> 28
+                            # ESCADA: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
                                 print("📉 Descendo para 38 canais...", flush=True)
                                 if await acao_ajustar_potencia(valor="38", server="SP"):
