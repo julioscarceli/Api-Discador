@@ -21,7 +21,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOx
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def get_now_sp():
-    """Horário Brasília para o log e travas."""
     return datetime.datetime.now() - datetime.timedelta(hours=3)
 
 def is_within_operating_hours() -> bool:
@@ -43,12 +42,13 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
+    # NOVO FIXO: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - MG] Monitor Ativado | Ajustado Horário Brasília", flush=True)
+        print(f"🚀 [SOMA - MG] Sensor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="MG")
         if not context: return
@@ -76,8 +76,6 @@ async def run_monitor():
                         print(f"\n⚡ [HORÁRIO DE PICO MG] {now_str} | Forçando 45...", flush=True)
                         if await acao_ajustar_potencia(valor="45", server="MG"): 
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
-                    else:
-                        print(f"\n🟢 [PICO ATIVO MG] {now_str} | Mantendo 45.")
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
@@ -111,7 +109,12 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL MG: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
+                            # NOVA ESCADA MG: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
+                                print("📉 MG: Descendo para 38...", flush=True)
+                                if await acao_ajustar_potencia(valor="38", server="MG"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "38", 0, 1
+                            elif canal_atual == "38" and ciclos_estaveis >= 20:
                                 print("📉 MG: Descendo para 36...", flush=True)
                                 if await acao_ajustar_potencia(valor="36", server="MG"):
                                     canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
