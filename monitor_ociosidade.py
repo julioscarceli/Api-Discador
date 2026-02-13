@@ -20,12 +20,10 @@ try:
 except ImportError:
     URL_FILAS_SP = "https://186.194.50.149/azcall/pages/filas.php"
 
-# Conexão Redis Railway
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 def get_now_sp():
-    """Retorna o horário atual ajustado para Brasília (UTC-3)."""
     return datetime.datetime.now() - datetime.timedelta(hours=3)
 
 def is_within_operating_hours() -> bool:
@@ -39,7 +37,6 @@ def is_horario_pico():
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
 def get_total_seconds(tempo_str):
-    """Converte HH:MM:SS ou MM:SS em segundos totais."""
     try:
         partes = list(map(int, tempo_str.split(':')))
         if len(partes) == 3: return partes[0] * 3600 + partes[1] * 60 + partes[2]
@@ -48,7 +45,6 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
-    # Fixo inicial: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
@@ -78,7 +74,6 @@ async def run_monitor():
                     await asyncio.sleep(20); continue
 
                 if is_horario_pico():
-                    # Pico ajustado para 40 para evitar erro de dropdown
                     if canal_atual != "40":
                         print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 40 fixo...", flush=True)
                         if await acao_ajustar_potencia(valor="40", server="SP"): 
@@ -105,7 +100,7 @@ async def run_monitor():
                             if len(col) >= 7 and "LIVRE" in col[3].upper():
                                 nome, tempo = col[0].strip(), col[6].strip()
                                 agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
-                                if get_total_seconds(tempo) >= 60: # 1 minuto
+                                if get_total_seconds(tempo) >= 60:
                                     ociosos_criticos += 1
 
                         for log in agentes_livres_logs: print(log, flush=True)
@@ -118,7 +113,6 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                            # ESCADA: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
                                 print("📉 Descendo para 38 canais...", flush=True)
                                 if await acao_ajustar_potencia(valor="38", server="SP"):
