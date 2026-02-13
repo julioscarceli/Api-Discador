@@ -110,7 +110,6 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL MG: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                            # ESCADA MG: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
                                 print("📉 MG: Descendo para 38...", flush=True)
                                 if await acao_ajustar_potencia(valor="38", server="MG"):
