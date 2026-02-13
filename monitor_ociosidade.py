@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
 
-# Configurações de Horário Comercial (Baseado no relógio de Brasília)
+# Configurações Brasília (09:30 - 18:30)
 START_HOUR, START_MINUTE = 9, 30
 END_HOUR, END_MINUTE = 18, 30
 
@@ -46,12 +46,13 @@ def get_total_seconds(tempo_str):
     except: return 0
 
 async def run_monitor():
+    # NOVO FIXO: 40
     canal_atual = "40" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Monitor Ativado | Ajustado Horário Brasília", flush=True)
+        print(f"🚀 [SOMA - SP] Sensor Ativado | Fixo: 40 | Escada: 38->36->28", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
@@ -76,11 +77,9 @@ async def run_monitor():
 
                 if is_horario_pico():
                     if canal_atual != "45":
-                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Ajustando para 45 fixo...", flush=True)
+                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 45 fixo...", flush=True)
                         if await acao_ajustar_potencia(valor="45", server="SP"): 
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
-                    else:
-                        print(f"\n🟢 [PICO ATIVO] {now_str} | Mantendo 45 canais.", flush=True)
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
@@ -107,6 +106,7 @@ async def run_monitor():
                         for log in agentes_livres_logs: print(log, flush=True)
 
                         if ociosos_criticos >= 3:
+                            # SE CRÍTICO -> VOLTA PARA O FIXO 40
                             print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Ajustando para 40!", flush=True)
                             if await acao_ajustar_potencia(valor="40", server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = "40", 0, 2
@@ -114,12 +114,17 @@ async def run_monitor():
                             ciclos_estaveis += 1
                             print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
+                            # NOVA ESCADA: 38 -> 36 -> 28
                             if canal_atual == "40" and ciclos_estaveis >= 20:
-                                print("📉 Estabilidade detectada. Descendo para 36 canais...", flush=True)
+                                print("📉 Descendo para 38 canais...", flush=True)
+                                if await acao_ajustar_potencia(valor="38", server="SP"):
+                                    canal_atual, ciclos_estaveis, pausa_estabilizacao = "38", 0, 1
+                            elif canal_atual == "38" and ciclos_estaveis >= 20:
+                                print("📉 Descendo para 36 canais...", flush=True)
                                 if await acao_ajustar_potencia(valor="36", server="SP"):
                                     canal_atual, ciclos_estaveis, pausa_estabilizacao = "36", 0, 1
                             elif canal_atual == "36" and ciclos_estaveis >= 20:
-                                print("📉 Operação consolidada. Descendo para 28 canais...", flush=True)
+                                print("📉 Descendo para 28 canais...", flush=True)
                                 if await acao_ajustar_potencia(valor="28", server="SP"):
                                     canal_atual, ciclos_estaveis, pausa_estabilizacao = "28", 0, 1
                     except:
