@@ -7,9 +7,9 @@ from playwright.async_api import async_playwright
 from utils.login_manager import create_context_and_login
 from scripts.checagem_saidas import acao_ajustar_potencia
 
-# Configurações de Horário Comercial
-START_HOUR, START_MINUTE = 12, 30
-END_HOUR, END_MINUTE = 21, 30
+# Configurações de Horário Comercial (Baseado no relógio de Brasília)
+START_HOUR, START_MINUTE = 9, 30
+END_HOUR, END_MINUTE = 18, 30
 
 try:
     from config.settings import LOGIN_URL_SP
@@ -23,14 +23,18 @@ except ImportError:
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
+def get_now_sp():
+    """Retorna o horário atual ajustado para Brasília (UTC-3)."""
+    return datetime.datetime.now() - datetime.timedelta(hours=3)
+
 def is_within_operating_hours() -> bool:
-    now = datetime.datetime.now()
+    now = get_now_sp()
     if now.weekday() >= 5: return False
     curr = now.hour * 60 + now.minute
     return (START_HOUR * 60 + START_MINUTE) <= curr <= (END_HOUR * 60 + END_MINUTE)
 
 def is_horario_pico():
-    agora = datetime.datetime.now().time()
+    agora = get_now_sp().time()
     return datetime.time(14, 40) <= agora <= datetime.time(16, 30)
 
 def get_total_seconds(tempo_str):
@@ -47,7 +51,7 @@ async def run_monitor():
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Monitor Ativado | Escada: 40->36->28 | Pico: 45 fixo", flush=True)
+        print(f"🚀 [SOMA - SP] Monitor Ativado | Ajustado Horário Brasília", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
@@ -59,7 +63,7 @@ async def run_monitor():
             await btn_fila.dispatch_event("click") 
             
             while True:
-                now_dt = datetime.datetime.now()
+                now_dt = get_now_sp()
                 now_str = now_dt.strftime('%H:%M:%S')
 
                 if not is_within_operating_hours():
@@ -72,7 +76,7 @@ async def run_monitor():
 
                 if is_horario_pico():
                     if canal_atual != "45":
-                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Forçando 45 canais...", flush=True)
+                        print(f"\n⚡ [HORÁRIO DE PICO] {now_str} | Ajustando para 45 fixo...", flush=True)
                         if await acao_ajustar_potencia(valor="45", server="SP"): 
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = "45", 0, 2
                     else:
@@ -80,7 +84,7 @@ async def run_monitor():
                     await asyncio.sleep(20)
                 else:
                     if pausa_estabilizacao > 0:
-                        print(f"⏳ [{now_str}] Aguardando estabilização do sistema ({pausa_estabilizacao}/2)...", flush=True)
+                        print(f"⏳ [{now_str}] Aguardando estabilização ({pausa_estabilizacao}/2)...", flush=True)
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
