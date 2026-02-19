@@ -65,3 +65,4 @@ async def run_monitor(server: str): # Recebe o parâmetro 'server'
 
 
 
+
