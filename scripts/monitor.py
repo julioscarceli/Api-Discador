@@ -44,7 +44,8 @@ async def run_monitor(server: str): # Recebe o parâmetro 'server'
             if match:
                 active_calls_count = int(match.group(1))
             else:
-                active_calls_count = 0
+                # Alterado de 0 para 4 conforme solicitado
+                active_calls_count = 4
 
             print(f"[{server_name}] Active Calls Encontradas: {active_calls_count}")
             return {"active_calls": active_calls_count, "status": "OK"}
@@ -56,6 +57,7 @@ async def run_monitor(server: str): # Recebe o parâmetro 'server'
         finally:
             if browser: # ✅ FECHA O BROWSER AQUI (Libera RAM)
                 await browser.close()
+
 
 
 
