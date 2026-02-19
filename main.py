@@ -1,4 +1,4 @@
-# main.py (VERSÃO ORIGINAL RESTAURADA)
+# main.py
 import asyncio
 import time
 import datetime
@@ -34,8 +34,9 @@ async def check_and_act(server: str):
     status = result.get("status", "ERRO")
     print(f"[{server}] Resultado: {active_calls} active calls. Status: {status}")
 
-    if active_calls == 0 and status == "OK":
-        print(f"🚨 ALERTA [{server}]: Chamadas zeradas. Acionando ROTINA DE RESTART...")
+    # AJUSTADO: Se as chamadas forem iguais ou menores que 6, aciona o restart
+    if active_calls <= 6 and status == "OK":
+        print(f"🚨 ALERTA [{server}]: Chamadas em nível crítico ({active_calls}). Acionando ROTINA DE RESTART...")
         success = await restart_campaign(server=server)
         if success:
             print(f"✅ RESTART SUCESSO [{server}]: Campanha reimportada e subida.")
@@ -64,6 +65,7 @@ async def main_scheduler():
 
 if __name__ == '__main__':
     asyncio.run(main_scheduler())
+
 
 
 
