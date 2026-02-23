@@ -39,18 +39,18 @@ def get_config_turno():
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "40", "desc1": "28", "ciclo1": 10, "desc2": "22", "ciclo2": 15, "min": "20", "ciclo3": 25}
+        return {"max": "30", "desc1": "26", "ciclo1": 10, "desc2": "22", "ciclo2": 15, "min": "20", "ciclo3": 25}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "40", "desc1": "30", "ciclo1": 5, "desc2": "28", "ciclo2": 10, "min": "26", "ciclo3": 10}
+        return {"max": "30", "desc1": "28", "ciclo1": 5, "desc2": "26", "ciclo2": 10, "min": "22", "ciclo3": 10}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
-        return {"max": "50", "desc1": "34", "ciclo1": 5, "desc2": "32", "ciclo2": 10, "min": "30", "ciclo3": 10}
+        return {"max": "40", "desc1": "34", "ciclo1": 5, "desc2": "32", "ciclo2": 10, "min": "30", "ciclo3": 10}
     
     # Fallback (Padrão para outros horários)
-    return {"max": "40", "desc1": "38", "ciclo1": 20, "desc2": "36", "ciclo2": 20, "min": "28", "ciclo3": 20}
+    return {"max": "30", "desc1": "28", "ciclo1": 10, "desc2": "26", "ciclo2": 10, "min": "22", "ciclo3": 10}
 
 def get_total_seconds(tempo_str):
     try:
