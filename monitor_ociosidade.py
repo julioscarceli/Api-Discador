@@ -53,65 +53,96 @@ def get_config_turno():
     
     return {"max": "24", "desc1": "20", "ciclo1": 10, "desc2": "18", "ciclo2": 10, "min": "16", "ciclo3": 10}
 
+def get_total_seconds(tempo_str):
+    try:
+        partes = list(map(int, tempo_str.split(':')))
+        if len(partes) == 3: return partes[0] * 3600 + partes[1] * 60 + partes[2]
+        elif len(partes) == 2: return partes[0] * 60 + partes[1]
+        return 0
+    except: return 0
+
 async def run_monitor():
     canal_atual = "DESCONHECIDO" 
     ciclos_estaveis = 0
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Monitor Ativado | Ajustes 23/02 Aplicados", flush=True)
+        print(f"🚀 [SOMA - SP] Sensor Ativado | Ajustes Finais Aplicados", flush=True)
+        
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
 
         try:
             conf = get_config_turno()
+            print(f"⚙️ [STARTUP] Turno detectado. Garantindo potência inicial em {conf['max']}...", flush=True)
             if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
                 canal_atual = conf['max']
 
             await page.goto(URL_FILAS_SP)
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
+            await btn_fila.wait_for(state="attached", timeout=15000)
             await btn_fila.dispatch_event("click") 
             
             while True:
-                now_str = get_now_sp().strftime('%H:%M:%S')
+                now_dt = get_now_sp()
+                now_str = now_dt.strftime('%H:%M:%S')
                 conf = get_config_turno()
 
                 if not is_within_operating_hours():
+                    print(f"💤 [{now_str}] Monitor SP em repouso...", flush=True)
                     await asyncio.sleep(300); continue
+
+                if r.get("lock_restart_sp") == "active":
+                    print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo.", flush=True)
+                    await asyncio.sleep(20); continue
 
                 try:
                     await page.wait_for_selector("#Filas tbody tr", timeout=15000)
                     linhas = await page.locator("#Filas tbody tr").all()
+                    agentes_livres_logs = []
                     ociosos_criticos = 0
 
                     for linha in linhas:
                         col = await linha.locator("td").all_inner_texts()
                         if len(col) >= 7 and "LIVRE" in col[3].upper():
-                            tempo = col[6].strip()
-                            partes = list(map(int, tempo.split(':')))
-                            segundos = partes[0]*3600 + partes[1]*60 + partes[2] if len(partes)==3 else partes[0]*60 + partes[1]
-                            if segundos >= 60: ociosos_criticos += 1
+                            nome, tempo = col[0].strip(), col[6].strip()
+                            agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
+                            if get_total_seconds(tempo) >= 60:
+                                ociosos_criticos += 1
 
                     if pausa_estabilizacao > 0:
+                        print(f"⏳ [{now_str}] Aguardando estabilização ({pausa_estabilizacao}/2)...", flush=True)
                         pausa_estabilizacao -= 1
                         await asyncio.sleep(15); continue
 
+                    print(f"\n--- Ciclo SP: {now_str} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis} | Turno Max: {conf['max']} ---", flush=True)
+                    for log in agentes_livres_logs: print(log, flush=True)
+
                     if ociosos_criticos >= 2:
+                        print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Retornando para {conf['max']}!", flush=True)
                         if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
                             canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['max'], 0, 2
                     else:
                         ciclos_estaveis += 1
+                        print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
+
                         if canal_atual == conf['max'] and ciclos_estaveis >= conf['ciclo1']:
+                            print(f"📉 Estabilidade {conf['ciclo1']} ciclos. Descendo para {conf['desc1']}...", flush=True)
                             if await acao_ajustar_potencia(valor=conf['desc1'], server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['desc1'], 0, 1
+                        
                         elif canal_atual == conf['desc1'] and ciclos_estaveis >= conf['ciclo2']:
+                            print(f"📉 Estabilidade {conf['ciclo2']} ciclos. Descendo para {conf['desc2']}...", flush=True)
                             if await acao_ajustar_potencia(valor=conf['desc2'], server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['desc2'], 0, 1
+                        
                         elif canal_atual == conf['desc2'] and ciclos_estaveis >= conf['ciclo3']:
+                            print(f"📉 Estabilidade {conf['ciclo3']} ciclos. Descendo para {conf['min']}...", flush=True)
                             if await acao_ajustar_potencia(valor=conf['min'], server="SP"):
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['min'], 0, 1
                 except:
                     await page.reload(); await asyncio.sleep(5)
+
                 await asyncio.sleep(10)
         finally:
             if browser: await browser.close()
