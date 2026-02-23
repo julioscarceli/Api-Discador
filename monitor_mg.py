@@ -38,11 +38,11 @@ def get_config_turno():
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "40", "desc1": "34", "ciclo1": 10, "desc2": "18", "ciclo2": 15, "min": "16", "ciclo3": 25}
+        return {"max": "30", "desc1": "26", "ciclo1": 10, "desc2": "18", "ciclo2": 15, "min": "16", "ciclo3": 25}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "30", "desc1": "28", "ciclo1": 5, "desc2": "26", "ciclo2": 10, "min": "22", "ciclo3": 10}
+        return {"max": "26", "desc1": "20", "ciclo1": 5, "desc2": "18", "ciclo2": 10, "min": "16", "ciclo3": 10}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
@@ -64,7 +64,7 @@ async def run_monitor():
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - MG] Monitor Ativado | Turnos Dinâmicos Ativos", flush=True)
+        print(f"🚀 [SOMA - MG] Monitor Ativado | Turnos Atualizados", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="MG")
         if not context: return
