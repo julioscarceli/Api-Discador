@@ -32,17 +32,16 @@ def is_within_operating_hours() -> bool:
     curr = now.hour * 60 + now.minute
     return (START_HOUR * 60 + START_MINUTE) <= curr <= (END_HOUR * 60 + END_MINUTE)
 
-# Função para determinar as regras de canais e ciclos baseada no horário atual
 def get_config_turno():
     agora = get_now_sp().time()
     
     # Turno 10:00 às 13:30
     if datetime.time(10, 0) <= agora < datetime.time(13, 30):
-        return {"max": "28", "desc1": "24", "ciclo1": 5, "desc2": "20", "ciclo2": 10, "min": "18", "ciclo3": 15}
+        return {"max": "28", "desc1": "22", "ciclo1": 5, "desc2": "18", "ciclo2": 10, "min": "16", "ciclo3": 15}
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "30", "desc1": "26", "ciclo1": 10, "desc2": "22", "ciclo2": 15, "min": "20", "ciclo3": 25}
+        return {"max": "30", "desc1": "26", "ciclo1": 10, "desc2": "18", "ciclo2": 15, "min": "16", "ciclo3": 25}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
@@ -52,7 +51,6 @@ def get_config_turno():
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
         return {"max": "40", "desc1": "32", "ciclo1": 5, "desc2": "30", "ciclo2": 10, "min": "28", "ciclo3": 10}
     
-    # Fallback (Padrão para outros horários)
     return {"max": "30", "desc1": "28", "ciclo1": 10, "desc2": "26", "ciclo2": 10, "min": "22", "ciclo3": 10}
 
 def get_total_seconds(tempo_str):
@@ -75,7 +73,6 @@ async def run_monitor():
         if not context: return
 
         try:
-            # Startup inteligente: Ajusta para o MAX do turno atual
             conf = get_config_turno()
             print(f"⚙️ [STARTUP] Turno detectado. Garantindo potência inicial em {conf['max']}...", flush=True)
             if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
@@ -89,7 +86,7 @@ async def run_monitor():
             while True:
                 now_dt = get_now_sp()
                 now_str = now_dt.strftime('%H:%M:%S')
-                conf = get_config_turno() # Atualiza regras do turno a cada ciclo
+                conf = get_config_turno()
 
                 if not is_within_operating_hours():
                     print(f"💤 [{now_str}] Monitor SP em repouso...", flush=True)
@@ -99,7 +96,6 @@ async def run_monitor():
                     print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo.", flush=True)
                     await asyncio.sleep(20); continue
 
-                # --- LEITURA DE AGENTES ---
                 try:
                     await page.wait_for_selector("#Filas tbody tr", timeout=15000)
                     linhas = await page.locator("#Filas tbody tr").all()
@@ -122,7 +118,6 @@ async def run_monitor():
                     print(f"\n--- Ciclo SP: {now_str} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis} | Turno Max: {conf['max']} ---", flush=True)
                     for log in agentes_livres_logs: print(log, flush=True)
 
-                    # Gatilho de recuo para o MAX do turno (ajustado para 2 agentes ociosos)
                     if ociosos_criticos >= 2:
                         print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Retornando para {conf['max']}!", flush=True)
                         if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
@@ -131,7 +126,6 @@ async def run_monitor():
                         ciclos_estaveis += 1
                         print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
 
-                        # Lógica da Escada Dinâmica por Turno
                         if canal_atual == conf['max'] and ciclos_estaveis >= conf['ciclo1']:
                             print(f"📉 Estabilidade {conf['ciclo1']} ciclos. Descendo para {conf['desc1']}...", flush=True)
                             if await acao_ajustar_potencia(valor=conf['desc1'], server="SP"):
