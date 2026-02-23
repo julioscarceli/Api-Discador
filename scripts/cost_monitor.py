@@ -2,7 +2,7 @@ import redis
 import os
 import sys
 
-# Configura o Redis
+# Configura o Redis usando a variável de ambiente do Railway
 REDIS_URL = os.getenv("REDIS_URL", "redis://default:BMetYritSRFXIbozyBtCQpJpQKOxnnZE@redis.railway.internal:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -11,15 +11,14 @@ def iniciar_receptor():
     pubsub = r.pubsub()
     pubsub.subscribe("logs_financeiro")
     
-    # O loop fica esperando mensagens chegarem do seu PC via Gateway
+    # Loop contínuo que aguarda mensagens do Redis
     for message in pubsub.listen():
         if message['type'] == 'message':
-            # Isso fará o log aparecer na aba 'Deploy Logs' do CUSTOS-MONITOR!
+            # O log aparecerá instantaneamente nos 'Deploy Logs' do Railway
             print(f"[PC-LOCAL] {message['data']}", flush=True)
 
-
 def processar_dados_para_dashboard_formatado(dados):
-    """Restaura a função necessária para a API carregar o Dashboard."""
+    """Formata os valores para exibição no Dashboard."""
     try:
         saldo = dados.get("saldo_atual", 0.0)
         custo_diario = dados.get("custo_diario_total", 0.0)
@@ -33,9 +32,9 @@ def processar_dados_para_dashboard_formatado(dados):
     except Exception as e:
         return {"erro": str(e)}
         
-
 if __name__ == "__main__":
     iniciar_receptor()
+
 
 
 
