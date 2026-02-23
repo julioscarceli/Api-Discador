@@ -41,7 +41,7 @@ def get_config_turno():
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "30", "desc1": "26", "ciclo1": 10, "desc2": "18", "ciclo2": 15, "min": "16", "ciclo3": 25}
+        return {"max": "40", "desc1": "34", "ciclo1": 10, "desc2": "18", "ciclo2": 15, "min": "16", "ciclo3": 25}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
