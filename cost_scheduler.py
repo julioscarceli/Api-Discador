@@ -14,9 +14,9 @@ def should_run_now():
 def run_worker():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Iniciando coleta...", flush=True)
     try:
-        # O -u é CRUCIAL para o log aparecer no Railway
+        # CORREÇÃO AQUI: Removido 'scripts/' pois o arquivo está na raiz
         subprocess.run(
-            [sys.executable, "-u", "scripts/cost_monitor.py"], 
+            [sys.executable, "-u", "cost_monitor.py"], 
             check=True,
             bufsize=0 
         )
@@ -25,6 +25,9 @@ def run_worker():
 
 if __name__ == "__main__":
     print("--- Agendador de Custos Iniciado ---", flush=True)
+    
+    # Opcional: Remova o run_worker() daqui se quiser que ele respeite 
+    # apenas a função should_run_now() desde o início.
     run_worker() 
 
     while True:
@@ -33,7 +36,9 @@ if __name__ == "__main__":
             print(f"💤 Aguardando 30 min...", flush=True)
             time.sleep(INTERVALO_VERIFICACAO)
         else:
+            # Se fora do horário, espera 10 min e checa o relógio de novo
             time.sleep(600)
+
 
 
 
