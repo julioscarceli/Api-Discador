@@ -1,4 +1,3 @@
-# cost_scheduler.py
 import time
 import subprocess
 import sys
@@ -7,14 +6,14 @@ from datetime import datetime
 INTERVALO_VERIFICACAO = 1800 
 
 def should_run_now():
+    # Usa UTC para compatibilidade com o servidor Railway (13h-21h UTC = 10h-18h Brasília)
     now = datetime.utcnow()
-    # Janela 10h-18h Brasília (13h-21h UTC)
     return now.weekday() < 5 and 13 <= now.hour < 21
 
 def run_worker():
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Iniciando coleta...", flush=True)
     try:
-        # CORREÇÃO AQUI: Removido 'scripts/' pois o arquivo está na raiz
+        # CORREÇÃO: Removido 'scripts/' pois o monitor está na raiz
         subprocess.run(
             [sys.executable, "-u", "cost_monitor.py"], 
             check=True,
@@ -26,8 +25,7 @@ def run_worker():
 if __name__ == "__main__":
     print("--- Agendador de Custos Iniciado ---", flush=True)
     
-    # Opcional: Remova o run_worker() daqui se quiser que ele respeite 
-    # apenas a função should_run_now() desde o início.
+    # Tenta rodar imediatamente ao iniciar
     run_worker() 
 
     while True:
@@ -36,8 +34,9 @@ if __name__ == "__main__":
             print(f"💤 Aguardando 30 min...", flush=True)
             time.sleep(INTERVALO_VERIFICACAO)
         else:
-            # Se fora do horário, espera 10 min e checa o relógio de novo
+            print(f"😴 Fora do horário de pico. Aguardando 10 min...", flush=True)
             time.sleep(600)
+
 
 
 
