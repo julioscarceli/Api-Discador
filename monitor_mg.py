@@ -34,21 +34,21 @@ def get_config_turno():
     
     # Turno 10:00 às 13:30
     if datetime.time(10, 0) <= agora < datetime.time(13, 30):
-        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
+        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 7, "final_min": "8", "final_ciclo": 12}
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "16", "desc1": "14", "ciclo1": 3, "desc2": "10", "ciclo2": 5, "min": "10", "ciclo3": 10}
+        return {"max": "16", "desc1": "14", "ciclo1": 3, "desc2": "12", "ciclo2": 5, "min": "10", "ciclo3": 7, "final_min": "10", "final_ciclo": 10}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
+        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 7, "final_min": "8", "final_ciclo": 12}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
         return {"max": "16", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
     
-    return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
+    return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 12}
 
 def get_total_seconds(tempo_str):
     try:
@@ -145,9 +145,15 @@ async def run_monitor():
                                 canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['desc2'], 0, 1
                         
                         elif canal_atual == conf['desc2'] and ciclos_estaveis >= conf['ciclo3']:
-                            print(f"📉 MG: Estabilidade {conf['ciclo3']} ciclos. Descendo para {conf['min']}...", flush=True)
-                            if await acao_ajustar_potencia(valor=conf['min'], server="MG"):
-                                canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['min'], 0, 1
+                            alvo = conf.get('min')
+                            print(f"📉 MG: Estabilidade {conf['ciclo3']} ciclos. Descendo para {alvo}...", flush=True)
+                            if await acao_ajustar_potencia(valor=alvo, server="MG"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = alvo, 0, 1
+                                
+                        elif canal_atual == conf.get('min') and 'final_ciclo' in conf and ciclos_estaveis >= conf['final_ciclo']:
+                            print(f"📉 MG: Estabilidade {conf['final_ciclo']} ciclos. Descendo para {conf['final_min']}...", flush=True)
+                            if await acao_ajustar_potencia(valor=conf['final_min'], server="MG"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['final_min'], 0, 1
                 except:
                     await page.reload(); await asyncio.sleep(5)
 
