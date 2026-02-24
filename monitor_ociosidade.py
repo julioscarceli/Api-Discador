@@ -73,11 +73,22 @@ async def run_monitor():
         if not context: return
 
         try:
+            now_dt = get_now_sp().time()
             conf = get_config_turno()
-            print(f"⚙️ [STARTUP] Garantindo potência inicial em {conf['max']}...", flush=True)
-            # Restaurada a chamada de ação que funcionava no primeiro script
-            if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
-                canal_atual = conf['max']
+            
+            # Lógica de Início Diferenciado
+            valor_inicio = conf['max']
+            if datetime.time(10, 0) <= now_dt < datetime.time(13, 30):
+                valor_inicio = "14"
+                print(f"⚙️ [STARTUP SP] Turno 10h: Iniciando em {valor_inicio}...", flush=True)
+            elif datetime.time(15, 0) <= now_dt < datetime.time(16, 30):
+                valor_inicio = "16"
+                print(f"⚙️ [STARTUP SP] Turno 15h: Iniciando em {valor_inicio}...", flush=True)
+            else:
+                print(f"⚙️ [STARTUP SP] Garantindo potência inicial em {valor_inicio}...", flush=True)
+
+            if await acao_ajustar_potencia(valor=valor_inicio, server="SP"):
+                canal_atual = valor_inicio
 
             await page.goto(URL_FILAS_SP)
             btn_fila = page.locator('//*[@id="GridFilas"]/ul/li[2]/a').first
