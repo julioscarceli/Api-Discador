@@ -76,7 +76,7 @@ async def run_monitor():
             now_dt = get_now_sp().time()
             conf = get_config_turno()
             
-            # Lógica de Início Diferenciado
+            # Lógica de Início Diferenciado (Startup)
             valor_inicio = conf['max']
             if datetime.time(10, 0) <= now_dt < datetime.time(13, 30):
                 valor_inicio = "16"
