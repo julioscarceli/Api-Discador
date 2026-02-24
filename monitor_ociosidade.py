@@ -49,9 +49,9 @@ def get_config_turno():
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
-        return {"max": "14", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "6", "ciclo3": 12, "final_min": "6", "final_ciclo": 20}
+        return {"max": "12", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "6", "ciclo3": 12, "final_min": "6", "final_ciclo": 20}
     
-    return {"max": "12", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 6, "min": "6", "ciclo3": 12}
+    return {"max": "12", "desc1": "10", "ciclo1": 3, "desc2": "8", "ciclo2": 6, "min": "6", "ciclo3": 10}
 
 def get_total_seconds(tempo_str):
     try:
