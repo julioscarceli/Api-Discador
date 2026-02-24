@@ -67,7 +67,7 @@ async def run_monitor():
     pausa_estabilizacao = 0 
 
     async with async_playwright() as p:
-        print(f"🚀 [SOMA - SP] Sensor Ativado | Configuração de Potência Atualizada", flush=True)
+        print(f"🚀 [SOMA - SP] Sensor Ativado | Ajuste de Canais Corrigido", flush=True)
         
         context, page, browser = await create_context_and_login(p, server="SP")
         if not context: return
@@ -75,6 +75,7 @@ async def run_monitor():
         try:
             conf = get_config_turno()
             print(f"⚙️ [STARTUP] Garantindo potência inicial em {conf['max']}...", flush=True)
+            # Restaurada a chamada de ação que funcionava no primeiro script
             if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
                 canal_atual = conf['max']
 
