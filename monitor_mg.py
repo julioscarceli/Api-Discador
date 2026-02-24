@@ -32,23 +32,23 @@ def is_within_operating_hours() -> bool:
 def get_config_turno():
     agora = get_now_sp().time()
     
-    # Turno 10:00 às 13:30
-    if datetime.time(10, 0) <= agora < datetime.time(13, 30):
-        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 7, "final_min": "8", "final_ciclo": 12}
+    # Turno 10:00 às 13:00
+    if datetime.time(10, 0) <= agora < datetime.time(13, 0):
+        return {"max": "14", "desc1": "12", "ciclo1": 5, "desc2": "10", "ciclo2": 6, "min": "8", "ciclo3": 10, "final_min": "8", "final_ciclo": 20}
     
-    # Turno 13:30 às 14:00
-    elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "16", "desc1": "14", "ciclo1": 3, "desc2": "12", "ciclo2": 5, "min": "10", "ciclo3": 7, "final_min": "10", "final_ciclo": 10}
+    # Turno 13:00 às 15:00
+    elif datetime.time(13, 0) <= agora < datetime.time(15, 0):
+        return {"max": "14", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 5, "min": "6", "ciclo3": 8, "final_min": "6", "final_ciclo": 20}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 7, "final_min": "8", "final_ciclo": 12}
+        return {"max": "14", "desc1": "12", "ciclo1": 5, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 7, "final_min": "8", "final_ciclo": 12}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
-        return {"max": "16", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
+        return {"max": "16", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "6", "ciclo3": 12, "final_min": "6", "final_ciclo": 20}
     
-    return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 12}
+    return {"max": "14", "desc1": "12", "ciclo1": 5, "desc2": "10", "ciclo2": 10, "min": "8", "ciclo3": 12}
 
 def get_total_seconds(tempo_str):
     try:
