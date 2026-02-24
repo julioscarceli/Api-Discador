@@ -29,8 +29,8 @@ def get_now_sp():
 def is_within_operating_hours() -> bool:
     now = get_now_sp()
     if now.weekday() >= 5: return False
-    curr = now.hour * 60 + now.minute
-    return (START_HOUR * 60 + START_MINUTE) <= curr <= (END_HOUR * 60 + END_MINUTE)
+    now_min = now.hour * 60 + now.minute
+    return (START_HOUR * 60 + START_MINUTE) <= now_min <= (END_HOUR * 60 + END_MINUTE)
 
 def get_config_turno():
     agora = get_now_sp().time()
@@ -76,6 +76,7 @@ async def run_monitor():
             now_dt = get_now_sp().time()
             conf = get_config_turno()
             
+            # Lógica de Início Diferenciado
             valor_inicio = conf['max']
             if datetime.time(10, 0) <= now_dt < datetime.time(13, 30):
                 valor_inicio = "14"
