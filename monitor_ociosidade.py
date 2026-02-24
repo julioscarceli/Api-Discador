@@ -96,5 +96,75 @@ async def run_monitor():
             await btn_fila.dispatch_event("click") 
             
             while True:
-                now_dt
+                now_dt = get_now_sp()
+                now_str = now_dt.strftime('%H:%M:%S')
+                conf = get_config_turno()
+
+                if not is_within_operating_hours():
+                    print(f"💤 [{now_str}] Monitor SP em repouso...", flush=True)
+                    await asyncio.sleep(300); continue
+
+                if r.get("lock_restart_sp") == "active":
+                    print(f"🚧 [{now_str}] BLOQUEIO REDIS: Restarter ativo.", flush=True)
+                    await asyncio.sleep(20); continue
+
+                try:
+                    await page.wait_for_selector("#Filas tbody tr", timeout=15000)
+                    linhas = await page.locator("#Filas tbody tr").all()
+                    agentes_livres_logs = []
+                    ociosos_criticos = 0
+
+                    for linha in linhas:
+                        col = await linha.locator("td").all_inner_texts()
+                        if len(col) >= 7 and "LIVRE" in col[3].upper():
+                            nome, tempo = col[0].strip(), col[6].strip()
+                            agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
+                            if get_total_seconds(tempo) >= 60:
+                                ociosos_criticos += 1
+
+                    if pausa_estabilizacao > 0:
+                        print(f"⏳ [{now_str}] Aguardando estabilização ({pausa_estabilizacao}/2)...", flush=True)
+                        pausa_estabilizacao -= 1
+                        await asyncio.sleep(15); continue
+
+                    print(f"\n--- Ciclo SP: {now_str} | Canais: {canal_atual} | Estabilidade: {ciclos_estaveis} | Turno Max: {conf['max']} ---", flush=True)
+                    for log in agentes_livres_logs: print(log, flush=True)
+
+                    if ociosos_criticos >= 2:
+                        print(f"🔴 CRÍTICO: {ociosos_criticos} agentes ociosos. Retornando para {conf['max']}!", flush=True)
+                        if await acao_ajustar_potencia(valor=conf['max'], server="SP"):
+                            canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['max'], 0, 2
+                    else:
+                        ciclos_estaveis += 1
+                        print(f"🟢 NORMAL: Operação estável (Ciclo {ciclos_estaveis}).", flush=True)
+
+                        if canal_atual == conf['max'] and ciclos_estaveis >= conf['ciclo1']:
+                            print(f"📉 Estabilidade {conf['ciclo1']} ciclos. Descendo para {conf['desc1']}...", flush=True)
+                            if await acao_ajustar_potencia(valor=conf['desc1'], server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['desc1'], 0, 1
+                        
+                        elif canal_atual == conf['desc1'] and ciclos_estaveis >= conf['ciclo2']:
+                            print(f"📉 Estabilidade {conf['ciclo2']} ciclos. Descendo para {conf['desc2']}...", flush=True)
+                            if await acao_ajustar_potencia(valor=conf['desc2'], server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['desc2'], 0, 1
+                        
+                        elif canal_atual == conf['desc2'] and ciclos_estaveis >= conf['ciclo3']:
+                            alvo = conf.get('min')
+                            print(f"📉 Estabilidade {conf['ciclo3']} ciclos. Descendo para {alvo}...", flush=True)
+                            if await acao_ajustar_potencia(valor=alvo, server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = alvo, 0, 1
+
+                        elif canal_atual == conf.get('min') and 'final_ciclo' in conf and ciclos_estaveis >= conf['final_ciclo']:
+                            print(f"📉 Estabilidade {conf['final_ciclo']} ciclos. Descendo para {conf['final_min']}...", flush=True)
+                            if await acao_ajustar_potencia(valor=conf['final_min'], server="SP"):
+                                canal_atual, ciclos_estaveis, pausa_estabilizacao = conf['final_min'], 0, 1
+                except:
+                    await page.reload(); await asyncio.sleep(5)
+
+                await asyncio.sleep(10)
+        finally:
+            if browser: await browser.close()
+
+if __name__ == "__main__":
+    asyncio.run(run_monitor())
     
