@@ -37,21 +37,21 @@ def get_config_turno():
     
     # Turno 10:00 às 13:30
     if datetime.time(10, 0) <= agora < datetime.time(13, 30):
-        return {"max": "26", "desc1": "18", "ciclo1": 4, "desc2": "14", "ciclo2": 5, "min": "12", "ciclo3": 10}
+        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
     
     # Turno 13:30 às 14:00
     elif datetime.time(13, 30) <= agora < datetime.time(14, 0):
-        return {"max": "30", "desc1": "26", "ciclo1": 4, "desc2": "18", "ciclo2": 5, "min": "16", "ciclo3": 10}
+        return {"max": "16", "desc1": "14", "ciclo1": 3, "desc2": "10", "ciclo2": 5, "min": "10", "ciclo3": 10}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "28", "desc1": "22", "ciclo1": 4, "desc2": "16", "ciclo2": 5, "min": "14", "ciclo3": 10}
+        return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
-        return {"max": "30", "desc1": "24", "ciclo1": 5, "desc2": "16", "ciclo2": 10, "min": "14", "ciclo3": 10}
+        return {"max": "16", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
     
-    return {"max": "26", "desc1": "18", "ciclo1": 4, "desc2": "14", "ciclo2": 5, "min": "12", "ciclo3": 10}
+    return {"max": "14", "desc1": "12", "ciclo1": 6, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12}
 
 def get_total_seconds(tempo_str):
     try:
@@ -76,13 +76,12 @@ async def run_monitor():
             now_dt = get_now_sp().time()
             conf = get_config_turno()
             
-            # Lógica de Início Diferenciado (Mantida conforme regra anterior)
             valor_inicio = conf['max']
             if datetime.time(10, 0) <= now_dt < datetime.time(13, 30):
                 valor_inicio = "14"
                 print(f"⚙️ [STARTUP SP] Turno 10h: Iniciando em {valor_inicio}...", flush=True)
             elif datetime.time(15, 0) <= now_dt < datetime.time(16, 30):
-                valor_inicio = "16"
+                valor_inicio = "14"
                 print(f"⚙️ [STARTUP SP] Turno 15h: Iniciando em {valor_inicio}...", flush=True)
             else:
                 print(f"⚙️ [STARTUP SP] Garantindo potência inicial em {valor_inicio}...", flush=True)
