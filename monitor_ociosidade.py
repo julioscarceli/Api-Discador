@@ -37,21 +37,21 @@ def get_config_turno():
     
     # Turno 10:00 às 13:00
     if datetime.time(10, 0) <= agora < datetime.time(13, 0):
-        return {"max": "12", "desc1": "10", "ciclo1": 3, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 10, "final_min": "8", "final_ciclo": 15}
+        return {"max": "12", "desc1": "10", "ciclo1": 20, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 10, "final_min": "8", "final_ciclo": 15}
     
     # Turno 13:00 às 15:00
     elif datetime.time(13, 0) <= agora < datetime.time(15, 0):
-        return {"max": "12", "desc1": "10", "ciclo1": 3, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 8, "final_min": "8", "final_ciclo": 20}
+        return {"max": "12", "desc1": "10", "ciclo1": 20, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 8, "final_min": "8", "final_ciclo": 20}
     
     # Turno 15:00 às 16:30
     elif datetime.time(15, 0) <= agora < datetime.time(16, 30):
-        return {"max": "12", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 5, "final_min": "8", "final_ciclo": 12}
+        return {"max": "12", "desc1": "10", "ciclo1": 20, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 5, "final_min": "8", "final_ciclo": 12}
     
     # Turno 16:30 às 18:00
     elif datetime.time(16, 30) <= agora <= datetime.time(18, 0):
-        return {"max": "12", "desc1": "10", "ciclo1": 5, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12, "final_min": "8", "final_ciclo": 20}
+        return {"max": "12", "desc1": "10", "ciclo1": 20, "desc2": "8", "ciclo2": 10, "min": "8", "ciclo3": 12, "final_min": "8", "final_ciclo": 20}
     
-    return {"max": "12", "desc1": "10", "ciclo1": 3, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 10}
+    return {"max": "12", "desc1": "10", "ciclo1": 20, "desc2": "8", "ciclo2": 6, "min": "8", "ciclo3": 10}
 
 def get_total_seconds(tempo_str):
     try:
@@ -118,7 +118,6 @@ async def run_monitor():
                         if len(col) >= 7 and "LIVRE" in col[3].upper():
                             nome, tempo = col[0].strip(), col[6].strip()
                             agentes_livres_logs.append(f"🟢 [LIVRE] {nome} | Ociosidade: {tempo}")
-                            # Gatilho CRÍTICO ajustado para 45 segundos
                             if get_total_seconds(tempo) >= 45:
                                 ociosos_criticos += 1
 
