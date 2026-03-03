@@ -19,7 +19,7 @@ URL_DA_MG = "http://186.194.50.155/azcall/pages/da.php"
 SELETOR_TAB_ENVIAR = 'a[data-toggle="tab"]:has-text("Enviar")'
 SELETOR_BOTAO_FINALIZAR = 'button.btParar'
 SELETOR_CONFIRMAR_FINALIZAR = 'button.swal2-confirm'
-SELETOR_AGRESSIVIDADE_BOTAO = '#Agressive > div > label > span.toggle'
+# SELETOR_AGRESSIVIDADE_BOTAO REMOVIDO CONFORME SOLICITADO
 
 async def select_dropdown_option_forced(page, button_xpath, text_to_find, server_label, is_telefone=False):
     """Sincronização reforçada para garantir seleção em Headless."""
@@ -46,13 +46,9 @@ async def select_dropdown_option_forced(page, button_xpath, text_to_find, server
         return False
 
 async def finalize_campaign_only(server: str):
-    """
-    Finaliza a campanha ativa usando a mesma lógica resiliente da restart_campaign.
-    Garante que o robô não fique preso em páginas de resumo (rs.php/ch.php).
-    """
+    """Finaliza a campanha ativa."""
     server_name = server.upper()
     async with async_playwright() as p:
-        # 1. Configuração do Browser (Igual ao restart_campaign)
         browser = await p.chromium.launch(headless=HEADLESS)
         context = await browser.new_context(ignore_https_errors=True)
         page = await context.new_page()
@@ -61,10 +57,8 @@ async def finalize_campaign_only(server: str):
 
         try:
             print(f"[{server_name}] Finalizando: Acessando URL Direta...")
-            # Força o carregamento da página de discagem imediatamente
             await page.goto(url_alvo, wait_until="commit", timeout=60000)
 
-            # --- LOGIN RÁPIDO (Caso a sessão não esteja ativa) ---
             user_input = page.locator('input[name="user"], input[placeholder*="Usuá"]').first
             if await user_input.is_visible(timeout=5000):
                 await user_input.fill(DISCADOR_USER)
@@ -72,32 +66,26 @@ async def finalize_campaign_only(server: str):
                 await page.locator('button:has-text("ENTRAR")').click()
                 await page.wait_for_load_state("domcontentloaded", timeout=30000)
 
-            # --- GARANTIA DE ROTA (Onde estava falhando) ---
             if "da.php" not in page.url:
                 print(f"[{server_name}] Desvio detectado ({page.url}). Forçando DA...")
                 await page.goto(url_alvo, wait_until="domcontentloaded", timeout=45000)
 
-            # --- ABA ENVIAR (Click via JS) ---
             print(f"[{server_name}] Sincronizando aba Enviar...")
             aba = page.locator(SELETOR_TAB_ENVIAR).first
             await aba.wait_for(state="attached", timeout=30000)
             await aba.dispatch_event("click")
             
-            # Espera o carregamento dos cards
             await page.wait_for_selector(".card-stats", state="visible", timeout=30000)
 
-            # --- FINALIZAÇÃO (Click via JS) ---
             btn_finalizar = page.locator(SELETOR_BOTAO_FINALIZAR).first
             if await btn_finalizar.count() > 0:
                 print(f"[{server_name}] 🖱️ Disparando Finalizar...")
                 await btn_finalizar.dispatch_event("click")
                 
-                # Confirmar no Modal
                 btn_confirmar = page.locator(SELETOR_CONFIRMAR_FINALIZAR).first
                 await btn_confirmar.wait_for(state="attached", timeout=10000)
                 await btn_confirmar.dispatch_event("click")
                 
-                # Espera o processamento do servidor
                 await page.wait_for_timeout(5000)
                 print(f"[{server_name}] ✅ Campanha FINALIZADA com sucesso.")
             else:
@@ -112,7 +100,7 @@ async def finalize_campaign_only(server: str):
             await browser.close()
 
 async def restart_campaign(server: str):
-    """Fluxo ultra-resiliente para eliminar o Timeout do Railway."""
+    """Fluxo ultra-resiliente sem o clique na agressividade."""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=HEADLESS)
         context = await browser.new_context(ignore_https_errors=True)
@@ -123,32 +111,24 @@ async def restart_campaign(server: str):
 
         try:
             print(f"[{server}] Acessando URL Direta...")
-            # Mudamos para 'commit' para agir assim que o servidor responder
             await page.goto(url_alvo, wait_until="commit", timeout=60000)
 
-            # --- LOGIN RÁPIDO ---
             user_input = page.locator('input[name="user"], input[placeholder*="Usuá"]').first
             if await user_input.is_visible(timeout=5000):
                 await user_input.fill(DISCADOR_USER)
                 await page.locator('input[type="password"]').fill(DISCADOR_PASS)
                 await page.locator('button:has-text("ENTRAR")').click()
-                # Espera apenas o carregamento do DOM inicial
                 await page.wait_for_load_state("domcontentloaded", timeout=30000)
 
-            # --- MELHORIA: CORREÇÃO DE ROTA ANTI-TIMEOUT ---
-            # Se o login te jogou para rs.php ou ch.php, força a volta para da.php
             if "da.php" not in page.url:
                 print(f"[{server}] Redirecionado para {page.url}. Forçando retorno para DA...")
                 await page.goto(url_alvo, wait_until="domcontentloaded", timeout=45000)
 
-            # --- ABA ENVIAR ---
             print(f"[{server}] Sincronizando aba Enviar...")
             aba = page.locator(SELETOR_TAB_ENVIAR).first
-            # Aumentamos o timeout para 45s para lidar com a latência do Railway
             await aba.wait_for(state="attached", timeout=45000)
             await aba.dispatch_event("click")
             
-            # BLOQUEIO DE SEGURANÇA: Espera o elemento de stats que confirma o carregamento da aba
             await page.wait_for_selector(".card-stats", state="visible", timeout=30000)
             
             stats_text = await page.locator(".card-stats").inner_text()
@@ -157,31 +137,26 @@ async def restart_campaign(server: str):
             current_campaign = match.group(0).strip()
             print(f"[{server}] Campanha Detectada: {current_campaign}")
 
-            # --- FINALIZAÇÃO ---
             await page.locator(SELETOR_BOTAO_FINALIZAR).first.dispatch_event("click")
             await page.locator(SELETOR_CONFIRMAR_FINALIZAR).first.dispatch_event("click")
             await page.wait_for_timeout(5000)
 
-            # --- RECONFIGURAÇÃO (Correção Telefone) ---
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[2]/div/div/button', current_campaign, server)
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[3]/div/div/button', current_campaign, server, is_telefone=True)
             await select_dropdown_option_forced(page, '//*[@id="Discador"]/div[1]/div/div/div/div[2]/div[1]/div[6]/div/div[1]/button', fila_name, server)
-            # Aguarda o seletor aparecer e clica
-            await page.wait_for_selector(SELETOR_AGRESSIVIDADE_BOTAO)
-            await page.click(SELETOR_AGRESSIVIDADE_BOTAO)
+
+            # --- AQUI ESTAVA O CLIQUE NA AGRESSIVIDADE (REMOVIDO) ---
             
-            # --- DISPARO ---
+            print(f"[{server}] Disparando com {SAIDAS_VALOR} canais...")
             await page.locator("#saida").fill(SAIDAS_VALOR)
             await page.wait_for_timeout(1000)
             await page.locator("#btCampanha1").dispatch_event("click")
 
-            # Espera de confirmação final
             await page.wait_for_timeout(8000)
             print(f"[{server}] ✅ RESTART CONCLUÍDO COM SUCESSO.")
             return True
 
         except Exception as e:
-            # Tratamento para redirecionamentos pós-clique que geram timeouts falsos
             if "Timeout" in str(e) and "btCampanha1" in str(e):
                 print(f"[{server}] ✅ Sucesso detectado (Timeout ignorado após ação).")
                 return True
@@ -193,6 +168,7 @@ async def restart_campaign(server: str):
 if __name__ == '__main__':
     target_server = os.getenv("TARGET_SERVER", "SP")
     asyncio.run(restart_campaign(server=target_server))
+
 
 
 
