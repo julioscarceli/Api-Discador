@@ -1,74 +1,64 @@
 # scripts/monitor.py
+
 import asyncio
+import json
 import re
-import os
 from playwright.async_api import async_playwright
+# Importamos as funções que agora usam o parâmetro 'server'
+from utils.login_manager import create_context_and_login, get_base_url, get_login_url, get_server_name
 
-# --- CONFIGURAÇÕES ---
-DISCADOR_USER = os.getenv("DISCADOR_USER", "SOMA")
-DISCADOR_PASS = os.getenv("DISCADOR_PASS", "123456")
-HEADLESS = os.getenv("HEADLESS_MODE", "True").lower() == "true"
 
-URL_DA_SP = "https://186.194.50.149/azcall/pages/da.php"
-URL_DA_MG = "http://186.194.50.155/azcall/pages/da.php"
+# A URL de monitoramento direta (ch.php) é construída dinamicamente
+def get_monitor_url(server: str):
+    # CORREÇÃO DE PROTOCOLO: Usa o mesmo protocolo do LOGIN_URL
+    login_url = get_login_url(server)
+    return login_url.replace('pages/login.php', 'pages/ch.php')
 
-async def run_monitor(server: str):
-    """
-    Versão Estável: Captura chamadas ativas via regex no texto da página.
-    """
-    server_name = server.upper()
-    url_alvo = URL_DA_SP if server_name == "SP" else URL_DA_MG
-    
+
+async def run_monitor(server: str): # Recebe o parâmetro 'server'
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=HEADLESS)
-        context = await browser.new_context(ignore_https_errors=True)
-        page = await context.new_page()
+        # 1. Recebe os 3 objetos
+        context, page, browser = await create_context_and_login(p, server=server)
+
+        if not context:
+            return {"active_calls": -1, "status": "Login Falhou"}
+
+        server_name = get_server_name(server)
 
         try:
-            # Acesso à página
-            await page.goto(url_alvo, wait_until="domcontentloaded", timeout=60000)
-
-            # Login automático se cair na tela de login
-            user_input = page.locator('input[name="user"]').first
-            if await user_input.is_visible(timeout=5000):
-                await user_input.fill(DISCADOR_USER)
-                await page.locator('input[type="password"]').fill(DISCADOR_PASS)
-                await page.locator('button:has-text("ENTRAR")').click()
-                await page.wait_for_load_state("networkidle", timeout=30000)
-
-            # Garante que está na página de discagem
-            if "da.php" not in page.url:
-                await page.goto(url_alvo, wait_until="domcontentloaded")
-
-            # Aguarda os dados carregarem na tela
-            await page.wait_for_timeout(5000)
+            # --- Etapa 1: Navegação Pós-Login ---
+            monitor_url = get_monitor_url(server)
             
-            # Captura o texto total da página para busca via Regex
-            page_text = await page.evaluate("() => document.body.innerText")
+            # Tolerância alta para o goto (lida com a lentidão e redirecionamento)
+            await page.goto(monitor_url, wait_until='domcontentloaded', timeout=40000) 
             
-            # REGEX ESTÁVEL: Busca o padrão numérico de chamadas ativas
-            # Procura por "Chamadas Ativas" seguido de números
-            match = re.search(r'Chamadas\s+Ativas[:\s]+(\d+)', page_text, re.IGNORECASE)
+            print(f"[{server_name}] Redirecionado com tolerância para: {monitor_url}")
+
+            # --- Etapa 2: Extrair o número de Active Calls ---
+            active_calls_element = page.locator('text=/active calls/').first
+            await active_calls_element.wait_for(state='visible', timeout=20000) 
+            full_text = await active_calls_element.inner_text()
             
+            match = re.search(r'(\d+)\s+active calls', full_text)
+
             if match:
-                active_calls = int(match.group(1))
+                active_calls_count = int(match.group(1))
             else:
-                # Segunda tentativa: busca apenas números isolados que costumam ficar nos cards de topo
-                # Seletor específico para o elemento de chamadas se o regex falhar
-                try:
-                    active_calls = int(await page.locator(".card-stats").first.inner_text())
-                except:
-                    active_calls = 0
+                # Alterado para 6 conforme solicitado: se não houver match, assume 6 para acionar o restart
+                active_calls_count = 6
 
-            return {"active_calls": active_calls, "status": "OK"}
+            print(f"[{server_name}] Active Calls Encontradas: {active_calls_count}")
+            return {"active_calls": active_calls_count, "status": "OK"}
 
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro Monitor: {e}")
-            if "login" in str(e).lower():
-                return {"active_calls": -1, "status": "Login Falhou"}
-            return {"active_calls": -1, "status": "ERRO"}
+            print(f"[{server_name}] ❌ Erro na extração ou navegação: {e}")
+            return {"active_calls": -1, "status": f"Extração Falhou: {e}"}
+
         finally:
-            await browser.close()
+            if browser: # ✅ FECHA O BROWSER AQUI (Libera RAM)
+                await browser.close()
+
+
 
 
 
