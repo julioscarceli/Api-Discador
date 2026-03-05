@@ -1,62 +1,62 @@
 # scripts/monitor.py
 
 import asyncio
-import json
 import re
 from playwright.async_api import async_playwright
-# Importamos as funções que agora usam o parâmetro 'server'
-from utils.login_manager import create_context_and_login, get_base_url, get_login_url, get_server_name
+# Mantemos o import do login_manager que você já usa no projeto
+from utils.login_manager import create_context_and_login
 
+# URL de monitoramento direta de SP (ch.php)
+URL_MONITOR_SP = "https://186.194.50.149/azcall/pages/ch.php"
 
-# A URL de monitoramento direta (ch.php) é construída dinamicamente
-def get_monitor_url(server: str):
-    # CORREÇÃO DE PROTOCOLO: Usa o mesmo protocolo do LOGIN_URL
-    login_url = get_login_url(server)
-    return login_url.replace('pages/login.php', 'pages/ch.php')
-
-
-async def run_monitor(server: str): # Recebe o parâmetro 'server'
+async def run_monitor(server: str): 
+    # Forçamos o servidor a ser sempre SP, independente do que o main enviar
+    server_target = "SP"
+    
     async with async_playwright() as p:
-        # 1. Recebe os 3 objetos
-        context, page, browser = await create_context_and_login(p, server=server)
+        # 1. Realiza o login usando sua ferramenta padrão
+        # Passamos p e server="SP" para garantir o contexto correto
+        context, page, browser = await create_context_and_login(p, server=server_target)
 
         if not context:
             return {"active_calls": -1, "status": "Login Falhou"}
 
-        server_name = get_server_name(server)
-
         try:
-            # --- Etapa 1: Navegação Pós-Login ---
-            monitor_url = get_monitor_url(server)
+            # --- Etapa 1: Navegação para a página de Monitoramento ---
+            # Tolerância alta para lidar com a latência da rede
+            await page.goto(URL_MONITOR_SP, wait_until='domcontentloaded', timeout=40000) 
             
-            # Tolerância alta para o goto (lida com a lentidão e redirecionamento)
-            await page.goto(monitor_url, wait_until='domcontentloaded', timeout=40000) 
-            
-            print(f"[{server_name}] Redirecionado com tolerância para: {monitor_url}")
+            print(f"[SP] Acessando página de monitoramento: {URL_MONITOR_SP}")
 
             # --- Etapa 2: Extrair o número de Active Calls ---
+            # O seletor busca o texto "active calls" na tela
             active_calls_element = page.locator('text=/active calls/').first
+            
+            # Espera o elemento aparecer (timeout de 20s)
             await active_calls_element.wait_for(state='visible', timeout=20000) 
             full_text = await active_calls_element.inner_text()
             
+            # Regex para capturar apenas o número antes de "active calls"
             match = re.search(r'(\d+)\s+active calls', full_text)
 
             if match:
                 active_calls_count = int(match.group(1))
             else:
-                # Alterado de 0 para 4 conforme solicitado
+                # Fallback: Caso o texto mude levemente, retorna 4 para evitar disparos falsos de erro
                 active_calls_count = 4
 
-            print(f"[{server_name}] Active Calls Encontradas: {active_calls_count}")
+            print(f"[SP] Chamadas Ativas Detectadas: {active_calls_count}")
             return {"active_calls": active_calls_count, "status": "OK"}
 
         except Exception as e:
-            print(f"[{server_name}] ❌ Erro na extração ou navegação: {e}")
-            return {"active_calls": -1, "status": f"Extração Falhou: {e}"}
+            print(f"[SP] ❌ Erro no monitoramento: {e}")
+            return {"active_calls": -1, "status": f"Erro: {e}"}
 
         finally:
-            if browser: # ✅ FECHA O BROWSER AQUI (Libera RAM)
+            # Libera a memória do container fechando o browser
+            if browser: 
                 await browser.close()
+
 
 
 
